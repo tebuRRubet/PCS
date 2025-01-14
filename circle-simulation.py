@@ -159,11 +159,16 @@ def stream():
 
 @ti.kernel
 def apply_outlet_conditions():
-    # Outlet (right boundary) - convective outflow condition
+    # Outlet (right boundary) - zero gradient outflow condition
     for j in range(ny):
+        # Set zero gradient for density and velocity
+        rho[nx-1, j] = rho[nx-2, j]
+        u_x[nx-1, j] = u_x[nx-2, j]
+        u_y[nx-1, j] = u_y[nx-2, j]
+        
+        # Calculate equilibrium distribution at outlet
         for k in range(9):
-            # Simple convective outflow - copy distributions from previous cell
-            f[nx-1, j, k] = f[nx-2, j, k]
+            f[nx-1, j, k] = equilibrium(rho[nx-1, j], u_x[nx-1, j], u_y[nx-1, j], k)
 
 @ti.kernel
 def apply_wall_conditions():
