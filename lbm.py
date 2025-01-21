@@ -4,11 +4,15 @@ import numpy as np
 ti.init(arch=ti.gpu)
 
 # Simulation parameters
-nx, ny = 400, 100     # Domain size
+nx, ny = 400, 100    # Domain size
 tau = 0.55           # Relaxation time
-omega = 1.0 / tau      # Relaxation frequency
-u_max = 0.1         # Maximum velocity
+omega = 1.0 / tau    # Relaxation frequency
+u_max = 0.1          # Maximum velocity
 rho0 = 1.0           # Reference density
+
+# Obstacle
+obstacle = "cylinder"
+obstacle = "airfoil"
 
 # Initialize grid fields
 rho = ti.field(dtype=float, shape=(nx, ny))
@@ -106,6 +110,16 @@ def is_in_airfoil(x: int, y: int) -> int:
     return ti.cast(zeta_r_squared <= cylinder_r * cylinder_r, ti.i32)
 
 
+@ti.func
+def is_in_obstacle(x: int, y: int) -> int:
+    result = 0
+    if obstacle == "cylinder":
+        result = is_in_cylinder(x, y)
+    elif obstacle == "airfoil":
+        result = is_in_airfoil(x, y)
+    return result
+
+
 @ti.kernel
 def initialize():
     for i, j in rho:
@@ -117,7 +131,7 @@ def initialize():
         u_y[i, j] = 0.0
 
         # Set cylinder boundary conditions
-        if is_in_airfoil(i, j):
+        if is_in_obstacle(i, j):
             u_x[i, j] = 0.0
             u_y[i, j] = 0.0
 
@@ -141,7 +155,7 @@ def apply_inlet_conditions(current_u_max: float):
 @ti.kernel
 def collide():
     for i, j in rho:
-        if not is_in_airfoil(i, j):
+        if not is_in_obstacle(i, j):
             # Calculate macroscopic quantities
             r = 0.0
             u = 0.0
@@ -170,14 +184,14 @@ def collide():
 def stream():
     # Streaming step
     for i, j, k in f:
-        if not is_in_airfoil(i, j):
+        if not is_in_obstacle(i, j):
             # Calculate destination
             ni = i + int(c_x[k])
             nj = j + int(c_y[k])
 
             # Handle boundaries
             if 0 <= ni < nx and 0 <= nj < ny:
-                if not is_in_airfoil(ni, nj):
+                if not is_in_obstacle(ni, nj):
                     f[ni, nj, k] = f_next[i, j, k]
                 else:
                     # Bounce-back on cylinder
@@ -218,7 +232,7 @@ def apply_wall_conditions():
 def generate_mask():
     for i, j in ti.ndrange(nx, ny):
         # Assign 1 if inside, 0 if outside
-        mask[i, j] = is_in_airfoil(i, j)
+        mask[i, j] = is_in_obstacle(i, j)
 
 
 # Use integer type for cylinder mask
