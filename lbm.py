@@ -107,35 +107,17 @@ def joukowski_transform(x, y):
 
 
 @ti.func
-def inverse_joukowski_transform1(alpha, beta):
+def inverse_joukowski_transform(alpha, beta):
     u = alpha**2 - beta**2 - 4
     v = 2 * alpha * beta
     r = ti.sqrt(u**2 + v**2)
     theta = ti.atan2(v, u)
 
-    x = (alpha + ti.sqrt(r) * ti.cos(theta / 2)) / 2
-    y = (beta + ti.sqrt(r) * ti.sin(theta / 2)) / 2
-    return x, y
-
-
-@ti.func
-def inverse_joukowski_transform2(alpha, beta):
-    u = alpha**2 - beta**2 - 4
-    v = 2 * alpha * beta
-    r = ti.sqrt(u**2 + v**2)
-    theta = ti.atan2(v, u)
-
-    x = (alpha - ti.sqrt(r) * ti.cos(theta / 2)) / 2
-    y = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
-    return x, y
-
-
-@ti.func
-def airfoil_transform(x, y):
-    t1 = glt(x, y)
-    t2 = joukowski_transform(t1[0], t1[1])
-    t3 = inverse_glt(t2[0], t2[1])
-    return int(t3[0]), int(t3[1])
+    x1 = (alpha + ti.sqrt(r) * ti.cos(theta / 2)) / 2
+    y1 = (beta + ti.sqrt(r) * ti.sin(theta / 2)) / 2
+    x2 = (alpha - ti.sqrt(r) * ti.cos(theta / 2)) / 2
+    y2 = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
+    return x1, y1, x2, y2
 
 
 @ti.func
@@ -166,8 +148,7 @@ def is_in_egg(x, y):
 @ti.func
 def is_in_airfoil(alpha, beta):
     alpha2, beta2 = glt(alpha, beta)
-    x1, y1 = inverse_joukowski_transform1(alpha2, beta2)
-    x2, y2 = inverse_joukowski_transform2(alpha2, beta2)
+    x1, y1, x2, y2 = inverse_joukowski_transform(alpha2, beta2)
     check1 = distance(a, b, x1, y1) <= 1
     check2 = distance(a, b, x2, y2) <= 1
     return ti.cast(not (check1 or check2), ti.i32)
