@@ -32,6 +32,8 @@ cylinder_x = nx // 3    # Cylinder position x
 cylinder_y = ny // 2    # Cylinder position y
 cylinder_r = ny // 8    # Cylinder radius
 
+a, b = 0.041, 0.272
+
 
 @ti.kernel
 def init_d2q9_constants():
@@ -75,43 +77,85 @@ def init_d2q9_constants():
 
 
 @ti.func
-def equilibrium(rho_local: float, ux_local: float, uy_local: float, k: int) -> float:
+def equilibrium(rho_local, ux_local, uy_local, k):
     cu = c_x[k] * ux_local + c_y[k] * uy_local
     usqr = ux_local * ux_local + uy_local * uy_local
     return w[k] * rho_local * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
 
 
 @ti.func
-def is_in_cylinder(x: int, y: int) -> int:
+def distance(x1, y1, x2, y2):
+    return ti.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+
+
+@ti.func
+def glt(x, y):
+    return ((x - cylinder_x) / cylinder_r) + a, \
+           ((y - cylinder_y) / cylinder_r) + b
+
+
+@ti.func
+def inverse_glt(x, y):
+    return cylinder_r * (x - a) + cylinder_x, cylinder_r * (y - b) + cylinder_y
+
+
+@ti.func
+def joukowski_transform(x, y):
+    r = x**2 + y**2
+    return x * (1 + 1 / r), y * (1 - 1 / r)
+
+
+@ti.func
+def inverse_joukowski_transform1(alpha, beta):
+    u = alpha**2 - beta**2 - 4
+    v = 2 * alpha * beta
+    r = ti.sqrt(u**2 + v**2)
+    theta = ti.atan2(v, u)
+
+    x = (alpha + ti.sqrt(r) * ti.cos(theta / 2)) / 2
+    y = (beta + ti.sqrt(r) * ti.sin(theta / 2)) / 2
+    return x, y
+
+
+@ti.func
+def inverse_joukowski_transform2(alpha, beta):
+    u = alpha**2 - beta**2 - 4
+    v = 2 * alpha * beta
+    r = ti.sqrt(u**2 + v**2)
+    theta = ti.atan2(v, u)
+
+    x = (alpha - ti.sqrt(r) * ti.cos(theta / 2)) / 2
+    y = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
+    return x, y
+
+
+@ti.func
+def airfoil_transform(x, y):
+    t1 = glt(x, y)
+    t2 = joukowski_transform(t1[0], t1[1])
+    t3 = inverse_glt(t2[0], t2[1])
+    return int(t3[0]), int(t3[1])
+
+
+@ti.func
+def is_in_cylinder(x, y):
     dx = x - cylinder_x
     dy = y - cylinder_y
     return ti.cast(dx * dx + dy * dy <= cylinder_r * cylinder_r, ti.i32)
 
 
 @ti.func
-def is_in_airfoil(x: int, y: int) -> int:
-    # Shift coordinates to cylinder center and convert to float
-    x_shifted = float(x) - cylinder_x
-    y_shifted = float(y) - cylinder_y
-
-    # Calculate magnitude squared (r²)
-    r_squared = x_shifted * x_shifted + y_shifted * y_shifted
-    z_squared = r_squared
-
-    discriminant = ti.sqrt(ti.abs(z_squared - 4.0))
-
-    # Get the x, y coordinates in circle plane
-    zeta_x = (x_shifted - discriminant) * 0.5
-    zeta_y = (y_shifted - discriminant) * 0.5
-
-    # Check if this point is inside the original cylinder
-    zeta_r_squared = zeta_x * zeta_x + zeta_y * zeta_y
-
-    return ti.cast(zeta_r_squared <= cylinder_r * cylinder_r, ti.i32)
+def is_in_airfoil(alpha, beta):
+    alpha2, beta2 = glt(alpha, beta)
+    x1, y1 = inverse_joukowski_transform1(alpha2, beta2)
+    x2, y2 = inverse_joukowski_transform2(alpha2, beta2)
+    check1 = distance(a, b, x1, y1) <= 1
+    check2 = distance(a, b, x2, y2) <= 1
+    return ti.cast(not (check1 or check2), ti.i32)
 
 
 @ti.func
-def is_in_obstacle(x: int, y: int) -> int:
+def is_in_obstacle(x, y):
     result = 0
     if obstacle == "cylinder":
         result = is_in_cylinder(x, y)
@@ -131,9 +175,9 @@ def initialize():
         u_y[i, j] = 0.0
 
         # Set cylinder boundary conditions
-        if is_in_obstacle(i, j):
-            u_x[i, j] = 0.0
-            u_y[i, j] = 0.0
+        # if is_in_obstacle(i, j):
+        #     u_x[i, j] = 0.0
+        #     u_y[i, j] = 0.0
 
         # Initialize distribution functions to equilibrium
         for k in range(9):
@@ -213,7 +257,8 @@ def apply_outlet_conditions():
 
         # Calculate equilibrium distribution at outlet
         for k in range(9):
-            f[nx - 1, j, k] = equilibrium(rho[nx - 1, j], u_x[nx - 1, j], u_y[nx - 1, j], k)
+            f[nx - 1, j, k] = equilibrium(rho[nx - 1, j], u_x[nx - 1, j],
+                                          u_y[nx - 1, j], k)
 
 
 @ti.kernel
@@ -233,6 +278,8 @@ def generate_mask():
     for i, j in ti.ndrange(nx, ny):
         # Assign 1 if inside, 0 if outside
         mask[i, j] = is_in_obstacle(i, j)
+        # x, y = airfoil_transform(i, j)
+        # mask[x, y] = is_in_cylinder(i, j)
 
 
 # Use integer type for cylinder mask
