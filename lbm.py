@@ -12,6 +12,7 @@ rho0 = 1.0           # Reference density
 
 # Obstacle
 obstacle = "cylinder"
+obstacle = "egg"
 obstacle = "airfoil"
 
 # Initialize grid fields
@@ -145,6 +146,24 @@ def is_in_cylinder(x, y):
 
 
 @ti.func
+def is_in_egg(x, y):
+    x_shifted = float(x) - cylinder_x
+    y_shifted = float(y) - cylinder_y
+
+    r_squared = x_shifted * x_shifted + y_shifted * y_shifted
+    z_squared = r_squared
+
+    discriminant = ti.sqrt(ti.abs(z_squared - 4.0))
+
+    zeta_x = (x_shifted - discriminant) * 0.5
+    zeta_y = (y_shifted - discriminant) * 0.5
+
+    zeta_r_squared = zeta_x * zeta_x + zeta_y * zeta_y
+
+    return ti.cast(zeta_r_squared <= cylinder_r * cylinder_r, ti.i32)
+
+
+@ti.func
 def is_in_airfoil(alpha, beta):
     alpha2, beta2 = glt(alpha, beta)
     x1, y1 = inverse_joukowski_transform1(alpha2, beta2)
@@ -159,6 +178,8 @@ def is_in_obstacle(x, y):
     result = 0
     if obstacle == "cylinder":
         result = is_in_cylinder(x, y)
+    elif obstacle == "egg":
+        result = is_in_egg(x, y)
     elif obstacle == "airfoil":
         result = is_in_airfoil(x, y)
     return result
