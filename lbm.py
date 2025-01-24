@@ -23,7 +23,6 @@ def streaming(vals):
     return vals
 
 
-
 def collision(vals, tau=5):
     # i = 0
     rho = np.sum(vals, axis=2)
@@ -39,36 +38,24 @@ def collision(vals, tau=5):
     return vals + (feq - vals) / tau
 
 
-
-
 fig, ax = plt.subplots(figsize=(8, 6))
 
+
 def update(iteration):
-    global grid  # Use the global grid variable
-    grid = collision(streaming(grid))  # Perform one iteration of streaming + collision
+    global grid
+    grid = collision(streaming(grid))
 
-    # Compute density and velocity
+
     rho = np.sum(grid, axis=2)
-    rho[rho == 0] = 1  # Prevent division by zero
-    coords_array = np.array(coords)
-    u = np.tensordot(grid, coords_array, axes=(2, 0)) / rho[:, :, None]
+    rho[rho == 0] = 1
 
-    # Clear and redraw the plot
     ax.clear()
     ax.imshow(rho, cmap='viridis', origin='lower')
-    # ax.quiver(
-    #     np.arange(grid.shape[1]),
-    #     np.arange(grid.shape[0]),
-    #     u[:, :, 0],
-    #     u[:, :, 1],
-    #     scale=1,
-    #     scale_units='xy',
-    #     color='white',
-    # )
+
     ax.set_title(f"Iteration {iteration}")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
 
-# Create animation
-ani = FuncAnimation(fig, update, frames=100, interval=100)  # 100 frames, 100ms delay
+
+ani = FuncAnimation(fig, update, frames=100, interval=100)
 plt.show()
