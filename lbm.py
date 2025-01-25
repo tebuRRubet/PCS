@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 
-ti.init(arch=ti.gpu)
-n = 150
+n = 500
 
 grid = np.arange(n * n * 9).reshape(n, n, 9)
 grid = np.random.randn(n, n, 9)
@@ -16,7 +15,7 @@ coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1), (0, -1),
           (1, -1)]
 coords = [np.array(c) for c in coords]
 
-n = 100
+n = 500
 
 rho_init = 1.0
 f_init = rho_init / 9
@@ -80,4 +79,5 @@ def update(iteration):
 
 
 ani = FuncAnimation(fig, update, frames=100, interval=10)
+print(n)
 plt.show()
