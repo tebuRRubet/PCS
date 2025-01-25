@@ -9,22 +9,32 @@ ti.init(arch=ti.gpu)
 fig, ax = plt.subplots(figsize=(8, 6))
 
 
+@ti.data_oriented
 class LBM:
-    def __init__(self, n=150, rho_init=1.0):
+    def __init__(self, n=600, rho_init=1.0):
         coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1),
                   (0, -1), (1, -1)]
-        self.coords = [np.array(c) for c in coords]
+        self.coords = ti.Vector.field(n=2, dtype=ti.i32, shape=(9,))
+        for i in range(9):
+            self.coords[i] = coords[i]
         self.n = n
         f_init = rho_init / 9
-        self.grid = np.full((n, n, 9), f_init)
+        self.disp = ti.field(dtype=ti.f32, shape=(n, n))
+        self.grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
+        self.update_grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
 
-        self.grid[n//2, 0, 5] += 1
-        self.grid[n//2 + 10, -1, 3] += 0.2
 
+        for i in range(-10, 11):
+            for j in range(20):
+                self.grid[j, n//2 + i][5] += 10
+
+
+    @ti.kernel
     def streaming(self):
-        for i, (x, y) in enumerate(self.coords):
-            self.grid[:, :, i] = np.roll(self.grid[:, :, i], x, axis=1)
-            self.grid[:, :, i] = np.roll(self.grid[:, :, i], -y, axis=0)
+        self.update_grid.fill(0)
+        for i, j in self.grid:
+            for k in range(9):
+                self.update_grid[(i + self.coords[k][0] + self.n) % self.n, (j + self.coords[k][1] + self.n) % self.n][k] = self.grid[i, j][k]
 
     def collision(self, tau=5):
         rho = np.sum(self.grid, axis=2)
@@ -54,8 +64,9 @@ class LBM:
         self.grid += (feq - self.grid) / tau
 
     def update(self, iteration):
-        self.collision()
         self.streaming()
+        exit()
+        self.collision()
 
         rho = np.sum(self.grid, axis=2)
         rho[rho == 0] = 1
@@ -67,7 +78,30 @@ class LBM:
         ax.set_xlabel("x")
         ax.set_ylabel("y")
 
+    @ti.kernel
+    def get_2d(self):
+        for i, j in self.grid:
+            self.disp[i, j] = 0
+            for k in range(9):
+                self.disp[i, j] += self.grid[i, j][k]
+            self.disp[i, j] /= 9
+
+    def display(self):
+        gui = ti.GUI('Hello World!', (self.n, self.n))
+        while gui.running:
+            self.get_2d()
+            gui.set_image(self.disp)
+            gui.show()
+            self.streaming()
+            # self.temp = self.grid
+            # self.grid = self.update_grid
+            # self.update_grid = self.temp
+            self.grid, self.update_grid = self.update_grid, self.grid
+            print(self.grid[1, self.n//2])
+
 
 L = LBM()
-ani = FuncAnimation(fig, L.update, frames=100, interval=10)
-plt.show()
+L.display()
+
+# ani = FuncAnimation(fig, L.update, frames=100, interval=10)
+# plt.show()
