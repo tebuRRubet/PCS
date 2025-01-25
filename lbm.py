@@ -6,14 +6,35 @@ from matplotlib.animation import FuncAnimation
 import numpy as np
 
 ti.init(arch=ti.gpu)
+n = 150
 
-
-# grid = np.arange(50 * 50 * 9).reshape(50, 50, 9)
-grid = np.random.randn(150, 150, 9)
-# grid = np.ones((5, 5, 9))
+grid = np.arange(n * n * 9).reshape(n, n, 9)
+grid = np.random.randn(n, n, 9)
+# grid = np.ones((n, n, 9))
+# grid[:, :, 5] = 2
 
 coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1), (0, -1),
           (1, -1)]
+coords = [np.array(c) for c in coords]
+
+
+
+
+
+
+
+n = 50
+
+rho_init = 1.0
+f_init = rho_init / 9
+grid = np.full((n, n, 9), f_init)
+
+grid[n//2, 0, 5] += 0.3
+grid[n//2 + 10, -1, 3] += 0.2
+
+
+
+
 
 
 def streaming(vals):
@@ -24,17 +45,23 @@ def streaming(vals):
 
 
 def collision(vals, tau=5):
-    # i = 0
     rho = np.sum(vals, axis=2)
     w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 9
-    u = np.array([np.array([sum([vals[i, j][k] * np.array([x, y]) for k, (x, y) in enumerate(coords)]) for j in range(vals.shape[1])]) for i in range(vals.shape[0])]) / rho[:, :, None]
-    feq = np.zeros_like(vals)
-    for i in range(vals.shape[0]):
-        for j in range(vals.shape[1]):
-            for k in range(9):
-                val = w[k] * rho[i, j] * (1 + 3 * np.array(coords[k]).dot(u[i, j]) + 9 / 2 * np.array(coords[k]).dot(u[i, j]) ** 2 - 3 / 2 * u[i, j].dot(u[i, j]))
-                feq[i, j][k] = val
-    print(feq)
+    u = np.zeros((n, n, 2))
+    for y in range(n):
+        for x in range(n):
+            for i in range(9):
+                u[y, x] += vals[y, x, i] * coords[i]
+            if rho[y, x] > 0:
+                u[y, x] /= rho[y, x]
+            else:
+                u[y, x] = np.array([0, 0])
+    feq = np.zeros_like(grid)
+    for y in range(n):
+        for x in range(n):
+            uu = u[y, x]
+            for i in range(9):
+                feq[y, x][i] = w[i] * rho[y, x] * (1 + 3 * np.dot(coords[i], uu) + 9/2 * np.dot(coords[i], uu) ** 2 - 3/2 * (np.dot(uu, uu)))
     return vals + (feq - vals) / tau
 
 
