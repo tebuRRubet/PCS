@@ -13,8 +13,8 @@ tau = 0.55         # Relaxation time
 omega = 1.0 / tau  # Relaxation frequency
 u_max = 0.1        # Maximum velocity
 rho0 = 1.0         # Reference density
-max_steps = 2000  # Reduced for reasonable gif size
-ramp_steps = 100  # Number of steps to ramp up the velocity
+max_steps = 2000   # Reduced for reasonable gif size
+ramp_steps = 100   # Number of steps to ramp up the velocity
 show_every = 10
 
 # Possible obstacles
@@ -200,11 +200,7 @@ def stream(mask: MaskType):
                 if not mask[ni, nj]:
                     f[ni, nj, k] = f_next[i, j, k]
                 else:
-                    # Bounce-back on cylinder
-                    f[i, j, opposite[k]] = f_next[i, j, k]
-            else:
-                # Bounce-back on top/bottom walls
-                if nj < 0 or nj >= ny:
+                    # Bounce-back on obstacle
                     f[i, j, opposite[k]] = f_next[i, j, k]
 
 
@@ -221,16 +217,6 @@ def apply_outlet_conditions():
         for k in range(9):
             f[nx - 1, j, k] = equilibrium(rho[nx - 1, j], u_x[nx - 1, j],
                                           u_y[nx - 1, j], k)
-
-
-@ti.kernel
-def apply_wall_conditions():
-    # Top and bottom walls
-    for i in range(nx):
-        # Bottom wall (j = 0)
-        u_x[i, 0], u_y[i, 0] = 0.0, 0.0
-        # Top wall (j = ny-1)
-        u_x[i, ny - 1], u_y[i, ny - 1] = 0.0, 0.0
 
 
 def create_frame(step, mask):
@@ -250,7 +236,7 @@ def create_frame(step, mask):
                    vmin=0, vmax=u_max * 1.5)
     fig.colorbar(im, label='Velocity magnitude')
 
-    # Add velocity vectors (decimated for clarity)
+    # Add velocity vectors
     skip = 10
     x, y = np.meshgrid(np.arange(0, nx, skip), np.arange(0, ny, skip))
     ax.quiver(x, y, ux[::skip, ::skip].T, uy[::skip, ::skip].T,
@@ -295,14 +281,10 @@ def simulate():
         else:
             current_u_max = u_max
 
-        # Apply ramped inlet conditions
         apply_inlet_conditions(current_u_max)
-
-        # Main simulation steps
         collide(mask.to_numpy())
         stream(mask.to_numpy())
         apply_outlet_conditions()
-        apply_wall_conditions()
 
         # Save frame every 10 steps
         if step % show_every == 0:
