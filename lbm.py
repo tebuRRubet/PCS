@@ -10,6 +10,9 @@ tau = 0.55         # Relaxation time
 omega = 1.0 / tau  # Relaxation frequency
 u_max = 0.1        # Maximum velocity
 rho0 = 1.0         # Reference density
+max_steps = 2000  # Reduced for reasonable gif size
+ramp_steps = 100  # Number of steps to ramp up the velocity
+show_every = 10
 
 # Possible obstacles
 CYLINDER = 0
@@ -36,11 +39,6 @@ cylinder_x, cylinder_y = nx // 3, ny // 2
 cylinder_r = ny // 8
 a, b = 0.041, 0.272
 mask = ti.field(dtype=ti.i32, shape=(nx, ny))
-
-# Simulation parameters
-max_steps = 2000  # Reduced for reasonable gif size
-ramp_steps = 100  # Number of steps to ramp up the velocity
-show_every = 10
 
 
 @ti.kernel
