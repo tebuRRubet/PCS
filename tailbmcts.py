@@ -7,8 +7,6 @@ import matplotlib.cm as cm
 
 ti.init(arch=ti.gpu)
 
-
-
 def precompute_colormap():
     import matplotlib.cm as cm
     viridis = cm.get_cmap('flag', 256)
@@ -21,8 +19,7 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, rho_init=1.0, tau=5, wrap=True):
-        self.wrap = wrap
+    def __init__(self, n=1000, rho_init=1.0, tau=5):
         tau = 10
         coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1),
                   (0, -1), (1, -1)]
@@ -46,108 +43,139 @@ class LBM:
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
+        self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
 
 
-        self.grid.fill(f_init)
+        # self.grid.fill(f_init)
+        # for i in range(n):
+        #     for j in range(n):
+        #         self.grid[i, j] =
+
+        self.init_grid()
+        for i in (0, self.n - 1):
+            for j in range(self.n):
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
+
+
+        for j in (0, self.n - 1):
+            for i in range(self.n):
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
+
+        print(self.grid[100, 0])
+        # exit()
         # self.grid[0, n//2][5] += 10
-        for i in range(-10, 11):
-            for j in range(20):
-                if i**2 + j ** 2 < 200:
-                    self.grid[j, n//2 + i] += 2
+        # for i in range(-10, 11):
+        #     for j in range(20):
+        #         if i**2 + j ** 2 < 200:
+        #             self.grid[10 + j, n//2 + i] += 2
 
         for i in range(-10, 11):
             for j in range(20):
                 if i**2 + j ** 2 < 200:
-                    self.grid[n//2 + j, n//2 + i + 150] += 2
+                    self.grid[n//2 - 300 + j, n//2 + i + 300][5] += 2
+
+        for i in range(-10, 11):
+            for j in range(20):
+                if i**2 + j ** 2 < 200:
+                    self.grid[n//2 + j, n//2 + i + 200][3] += 1
+        # for i in range(10):
+        #     for j in range(10):
+        #         self.grid[n//2 + 100 + i, n//2 + j + 100] += 1
+
         # self.grid.fill(f_init)
         # self.grid[1, n//2][5] += 1
+        # self.
 
+    @ti.kernel
+    def init_grid(self):
+        for i, j in self.grid:
+            for k in ti.static(range(9)):
+                self.grid[i, j][k] = self.w[k]
 
     @ti.kernel
     def stream(self):
-        # self.u.fill(0)
-
         # Static to allow for compile-time branch discarding.
-        for i, j in ti.ndrange(
-            (ti.static(0 if self.wrap else 1), ti.static(self.n if self.wrap else self.n - 1)),
-            (ti.static(0 if self.wrap else 1), ti.static(self.n if self.wrap else self.n - 1))):
+        for i, j in ti.ndrange((1, self.n - 1), (1, self.n - 1)):
             rho = 0.0
             u = ti.Vector([0.0, 0.0])
-            for k in ti.ndrange(9):
-                # Not sure if ternary operator allows for compile-time static branch discarding.
-                ni = (i + self.coords[k].x + self.n) % self.n if ti.static(self.wrap) else (i + self.coords[k].x)
-                nj = (j + self.coords[k].y + self.n) % self.n if ti.static(self.wrap) else (j + self.coords[k].y)
-                self.update_grid[ni, nj][k] = self.grid[i, j][k]
+            for k in ti.static(range(9)):
+                self.update_grid[i + self.coords[k].x, j + self.coords[k].y][k] = self.grid[i, j][k]
             ''''''''
             self.u[i, j] = (u / rho) if rho > 0 else tm.vec2([0, 0])
             # self.u[i, j] *= 1 / self.rho[i, j] * (self.rho[i, j] != 0)
 
     @ti.kernel
     def collide_and_stream(self):
-
-        # Static to allow for compile-time branch discarding.
-        for i, j in ti.ndrange(
-            (ti.static(0 if self.wrap else 1), ti.static(self.n if self.wrap else self.n - 1)),
-            (ti.static(0 if self.wrap else 1), ti.static(self.n if self.wrap else self.n - 1))):
-
-            rho = 0.0
+        for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
+            rho = self.grid[i, j].sum()
             u = ti.Vector([0.0, 0.0])
-            for k in ti.ndrange(9):
-                # Not sure if ternary operator allows for compile-time static branch discarding.
-                rho += self.grid[i, j][k]
+            for k in ti.static(range(9)):
                 u += self.coords[k] * self.grid[i, j][k]
 
             u = (u / rho) if rho > 0 else tm.vec2([0, 0])
-            # u /= rho
-            # tm.nan
             self.u[i, j] = u
-
-            for k in ti.ndrange(9):
+            for k in ti.static(range(9)):
                 feq = self.w[k] * rho * (1 + 3 * tm.dot(self.coords[k], u) + 4.5 * tm.dot(self.coords[k], u) ** 2 - 1.5 * tm.dot(u, u))
-                self.grid[i, j][k] += self.tau_inv * (feq - self.grid[i, j][k])
+                self.update_grid[i + self.coords[k].x, j + self.coords[k].y][k] = (1 - self.tau_inv) * self.grid[i, j][k] + self.tau_inv * feq
 
-            for k in ti.ndrange(9):
-                # Not sure if ternary operator allows for compile-time static branch discarding.
-                ni = (i + self.coords[k].x + self.n) % self.n if ti.static(self.wrap) else (i + self.coords[k].x)
-                nj = (j + self.coords[k].y + self.n) % self.n if ti.static(self.wrap) else (j + self.coords[k].y)
-                self.update_grid[ni, nj][k] = self.grid[i, j][k]
-            ''''''''
-            # self.u[i, j] *= 1 / self.rho[i, j] * (self.rho[i, j] != 0)
+    @ti.func
+    def total_density(self):
+        dens = 0.0
+        for i, j in self.grid:
+            ti.atomic_add(dens, self.grid[i, j].sum())
+        return dens
 
-    # @ti.kernel
-    # def bounce_boundary(self):
-    #     for i in ti.ndrange(self.n):
-    #         self.
+    @ti.func
+    def reverse_vector(self, x):
+        return ti.Vector([x[i] for i in range(x.get_shape()[0])][::-1])
 
+    @ti.kernel
+    def bounce_boundary(self):
+        for i, j in self.grid:
+            if self.boundary[i, j]:
+                # if i == 100 and j == 0:
+                    # print(self.update_grid[i, j])
+                    # print(self.reverse_vector(self.update_grid[i, j]))
+                    # print()
+                self.grid[i, j] = self.reverse_vector(self.update_grid[i, j])
+            else:
+                self.grid[i, j] = self.update_grid[i, j]
+
+    """Check performance"""
+    @ti.kernel
     def update(self):
-        self.grid.copy_from(self.update_grid)
+        print(self.total_density())
+        # self.grid.copy_from(self.update_grid)
+        for i, j in self.update_grid:
+            self.grid[i, j] = self.update_grid[i, j]
 
     @ti.kernel
     def get_velocity_magnitude(self):
         for i, j in self.grid:
             self.disp[i, j] = self.u[i, j].norm()
+            # self.disp[i, j] = tm.dot(ti.Vector([1] * 9), self.grid[i, j]) / 9
 
     def apply_colormap(self, data):
         norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
         colormap = cm.viridis(norm_data)
         return (colormap[:, :, :3] * 255).astype(np.uint8)
 
-
-
-
     @ti.kernel
     def normalize_and_map(self):
         for i, j in self.disp:
             self.max_val[None] = ti.max(self.max_val[None], self.disp[i, j])
-        # curr_max = 1e-8
-        # for i, j in self.disp:
-            # curr_max = ti.max(self.max_val[None], self.disp[i, j])
+        curr_max = 1e-8
+        for i, j in self.disp:
+            curr_max = ti.max(self.max_val[None], self.disp[i, j])
+        # print(self.max_val[None], curr_max)
+
         for i, j in self.disp:
             norm_val = ti.cast(self.disp[i, j] / self.max_val[None] * 255, ti.i32)
             norm_val = ti.min(ti.max(norm_val, 0), 255)
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * 255)
-
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
@@ -155,7 +183,6 @@ class LBM:
         self.stream()
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
             self.update()
-
             # self.collide()
 
             self.get_velocity_magnitude()
@@ -164,6 +191,8 @@ class LBM:
             gui.show()
             # self.stream()
             self.collide_and_stream()
+            self.bounce_boundary()
+
 
 
 
