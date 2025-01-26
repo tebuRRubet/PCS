@@ -42,6 +42,7 @@ cylinder_x, cylinder_y = nx // 3, ny // 2
 cylinder_r = ny // 8
 a, b = 0.041, 0.272
 mask = ti.field(dtype=ti.i32, shape=(nx, ny))
+MaskType = ti.types.ndarray(dtype=ti.i32, ndim=2)
 
 
 @ti.kernel
@@ -163,7 +164,7 @@ def apply_inlet_conditions(current_u_max: float):
 
 
 @ti.kernel
-def collide(mask: ti.types.ndarray(dtype=ti.i32, ndim=2)):
+def collide(mask: MaskType):
     for i, j in rho:
         if not mask[i, j]:
             # Calculate macroscopic quantities
@@ -186,7 +187,7 @@ def collide(mask: ti.types.ndarray(dtype=ti.i32, ndim=2)):
 
 
 @ti.kernel
-def stream(mask: ti.types.ndarray(dtype=ti.i32, ndim=2)):
+def stream(mask: MaskType):
     # Streaming step
     for i, j, k in f:
         if not mask[i, j]:
