@@ -18,10 +18,7 @@ ramp_steps = 100  # Number of steps to ramp up the velocity
 show_every = 10
 
 # Possible obstacles
-CYLINDER = 0
-EGG = 1
-AIRFOIL = 2
-
+CYLINDER, EGG, AIRFOIL = 0, 1, 2
 obstacle = EGG
 
 # Fields and constants
@@ -152,6 +149,10 @@ def initialize():
             f[i, j, k] = equilibrium(rho0, 0.0, 0.0, k)
             f_next[i, j, k] = f[i, j, k]
 
+    for i, j in mask:
+        # Assign 1 if inside, 0 if outside
+        mask[i, j] = is_in_obstacle(i, j)
+
 
 @ti.kernel
 def apply_inlet_conditions(current_u_max: float):
@@ -232,13 +233,6 @@ def apply_wall_conditions():
         u_x[i, ny - 1], u_y[i, ny - 1] = 0.0, 0.0
 
 
-@ti.kernel
-def generate_mask():
-    for i, j in ti.ndrange(nx, ny):
-        # Assign 1 if inside, 0 if outside
-        mask[i, j] = is_in_obstacle(i, j)
-
-
 def create_frame(step, mask):
     # Create figure
     fig = Figure(figsize=(20, 5), dpi=100)
@@ -290,9 +284,6 @@ def simulate():
     init_d2q9_constants()
     initialize()
 
-    generate_mask()
-    mask_np = mask.to_numpy()
-
     # List to store frames
     frames = []
 
@@ -308,15 +299,15 @@ def simulate():
         apply_inlet_conditions(current_u_max)
 
         # Main simulation steps
-        collide(mask_np)
-        stream(mask_np)
+        collide(mask.to_numpy())
+        stream(mask.to_numpy())
         apply_outlet_conditions()
         apply_wall_conditions()
 
         # Save frame every 10 steps
         if step % show_every == 0:
             print(f"Step {step}/{max_steps}")
-            frames.append(create_frame(step, mask_np))
+            frames.append(create_frame(step, mask.to_numpy()))
 
     # Save as GIF
     print("Saving animation...")
