@@ -1,12 +1,10 @@
 import taichi as ti
 import taichi.math as tm
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 
 ti.init(arch=ti.gpu)
-
 
 
 def precompute_colormap():
@@ -16,11 +14,9 @@ def precompute_colormap():
     return colors.astype(np.float32)
 
 
-
-
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, rho_init=1.0, tau=5, wrap=False):
+    def __init__(self, n=1000, rho_init=1.0, tau=5, wrap=True):
         self.wrap = wrap
         tau = 10
         coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1),
@@ -48,7 +44,6 @@ class LBM:
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
 
-
         self.grid.fill(f_init)
         # self.grid[0, n//2][5] += 10
         for i in range(-10, 11):
@@ -63,13 +58,11 @@ class LBM:
         # self.grid.fill(f_init)
         # self.grid[1, n//2][5] += 1
 
-
     # Race condition split
     @ti.kernel
     def stream_and_collide(self):
         self.rho.fill(0)
         self.u.fill(0)
-
         # Static to allow for compile-time branch discarding.
         for i, j in ti.ndrange(
             (ti.static(0 if self.wrap else 1), self.n - ti.static(0 if self.wrap else 1)),
@@ -88,7 +81,6 @@ class LBM:
             self.u[i, j] = (u / rho) if rho > 0 else tm.vec2([0, 0])
             # self.u[i, j] *= 1 / self.rho[i, j] * (self.rho[i, j] != 0)
 
-
     @ti.kernel
     def collide(self):
         for i, j in ti.ndrange(
@@ -100,15 +92,13 @@ class LBM:
                 # print(self.tau_inv * (feq - self.update_grid[i, j][k]))
                 self.update_grid[i, j][k] += self.tau_inv * (feq - self.update_grid[i, j][k])
 
-    @ti.kernel
-    def bounce_boundary(self):
-        for i in ti.ndrange(self.n):
-            self.
+    # @ti.kernel
+    # def bounce_boundary(self):
+    #     for i in ti.ndrange(self.n):
+    #         self.
 
     def update(self):
         self.grid.copy_from(self.update_grid)
-
-
 
     @ti.kernel
     def get_velocity_magnitude(self):
@@ -120,9 +110,6 @@ class LBM:
         colormap = cm.viridis(norm_data)
         return (colormap[:, :, :3] * 255).astype(np.uint8)
 
-
-
-
     @ti.kernel
     def normalize_and_map(self):
         for i, j in self.disp:
@@ -132,7 +119,6 @@ class LBM:
             norm_val = ti.min(ti.max(norm_val, 0), 255)
             for c in ti.static(range(3)):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * 255)
-
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
@@ -149,8 +135,5 @@ class LBM:
             gui.show()
 
 
-
-
 L = LBM()
 L.display()
-
