@@ -19,7 +19,7 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, rho_init=1.0, tau=5):
+    def __init__(self, n=1000, tau=5):
         tau = 10
         coords = [(-1, 1), (0, 1), (1, 1), (-1, 0), (0, 0), (1, 0), (-1, -1),
                   (0, -1), (1, -1)]
@@ -27,7 +27,6 @@ class LBM:
         for i in range(9):
             self.coords[i] = coords[i]
         self.n = n
-        f_init = rho_init / 9
         self.disp = ti.field(dtype=ti.f32, shape=(n, n))
         self.grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
         self.update_grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
@@ -45,15 +44,7 @@ class LBM:
         self.max_val.fill(1e-8)
         self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
 
-
-        # self.grid.fill(f_init)
-        # for i in range(n):
-        #     for j in range(n):
-        #         self.grid[i, j] =
-
         self.init_grid()
-
-
 
         for i in (0, self.n - 1):
             for j in range(self.n):
@@ -62,7 +53,6 @@ class LBM:
 
         for i in range(450, 550):
             for j in range(450, 550):
-                # if i ** 2 + j ** 2 < 100 ** 2:
                 self.boundary[i, j] = 1
                 self.grid[i, j].fill(0)
 
@@ -70,14 +60,6 @@ class LBM:
             for i in range(self.n):
                 self.boundary[i, j] = 1
                 self.grid[i, j].fill(0)
-
-        print(self.grid[100, 0])
-        # exit()
-        # self.grid[0, n//2][5] += 10
-        # for i in range(-10, 11):
-        #     for j in range(20):
-        #         if i**2 + j ** 2 < 200:
-        #             self.grid[10 + j, n//2 + i] += 2
 
         for i in range(-10, 11):
             for j in range(20):
@@ -88,13 +70,6 @@ class LBM:
             for j in range(20):
                 if i**2 + j ** 2 < 200:
                     self.grid[n//2 + j, n//2 + i + 200][3] += 1
-        # for i in range(10):
-        #     for j in range(10):
-        #         self.grid[n//2 + 100 + i, n//2 + j + 100] += 1
-
-        # self.grid.fill(f_init)
-        # self.grid[1, n//2][5] += 1
-        # self.
 
     @ti.kernel
     def init_grid(self):
@@ -104,15 +79,12 @@ class LBM:
 
     @ti.kernel
     def stream(self):
-        # Static to allow for compile-time branch discarding.
         for i, j in ti.ndrange((1, self.n - 1), (1, self.n - 1)):
             rho = 0.0
             u = ti.Vector([0.0, 0.0])
             for k in ti.static(range(9)):
                 self.update_grid[i + self.coords[k].x, j + self.coords[k].y][k] = self.grid[i, j][k]
-            ''''''''
             self.u[i, j] = (u / rho) if rho > 0 else tm.vec2([0, 0])
-            # self.u[i, j] *= 1 / self.rho[i, j] * (self.rho[i, j] != 0)
 
     @ti.kernel
     def collide_and_stream(self):
@@ -143,10 +115,6 @@ class LBM:
     def bounce_boundary(self):
         for i, j in self.grid:
             if self.boundary[i, j]:
-                # if i == 100 and j == 0:
-                    # print(self.update_grid[i, j])
-                    # print(self.reverse_vector(self.update_grid[i, j]))
-                    # print()
                 self.grid[i, j] = self.reverse_vector(self.update_grid[i, j])
                 self.u[i, j] = tm.vec2([0, 0])
             else:
@@ -175,9 +143,9 @@ class LBM:
     def normalize_and_map(self):
         for i, j in self.disp:
             self.max_val[None] = ti.max(self.max_val[None], self.disp[i, j])
-        curr_max = 1e-8
-        for i, j in self.disp:
-            curr_max = ti.max(self.max_val[None], self.disp[i, j])
+        # curr_max = 1e-8
+        # for i, j in self.disp:
+        #     curr_max = ti.max(self.max_val[None], self.disp[i, j])
         # print(self.max_val[None], curr_max)
 
         for i, j in self.disp:
@@ -194,18 +162,13 @@ class LBM:
         self.stream()
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
             self.update()
-            # self.collide()
 
             self.get_velocity_magnitude()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()
-            # self.stream()
             self.collide_and_stream()
             self.bounce_boundary()
-
-
-
 
 
 L = LBM()
