@@ -1,87 +1,67 @@
 import taichi as ti
 import imageio
 import numpy as np
+
 ti.init(arch=ti.gpu)
 
 # Simulation parameters
-nx, ny = 400, 100    # Domain size
-tau = 0.55           # Relaxation time
-omega = 1.0 / tau    # Relaxation frequency
-u_max = 0.1          # Maximum velocity
-rho0 = 1.0           # Reference density
+nx, ny = 400, 100  # Domain size
+tau = 0.55         # Relaxation time
+omega = 1.0 / tau  # Relaxation frequency
+u_max = 0.1        # Maximum velocity
+rho0 = 1.0         # Reference density
 
-# Obstacle
-obstacle = "cylinder"
-obstacle = "egg"
-obstacle = "airfoil"
+# Possible obstacles
+CYLINDER = 0
+EGG = 1
+AIRFOIL = 2
 
-# Initialize grid fields
-rho = ti.field(dtype=float, shape=(nx, ny))
-u_x = ti.field(dtype=float, shape=(nx, ny))
-u_y = ti.field(dtype=float, shape=(nx, ny))
-f = ti.field(dtype=float, shape=(nx, ny, 9))
-f_next = ti.field(dtype=float, shape=(nx, ny, 9))
+obstacle = AIRFOIL
 
-# D2Q9 lattice constants
-c_x = ti.field(dtype=float, shape=9)
-c_y = ti.field(dtype=float, shape=9)
-w = ti.field(dtype=float, shape=9)
-opposite = ti.field(dtype=int, shape=9)
+# Fields and constants
+rho = ti.field(dtype=ti.f32, shape=(nx, ny))
+u_x = ti.field(dtype=ti.f32, shape=(nx, ny))
+u_y = ti.field(dtype=ti.f32, shape=(nx, ny))
+f = ti.field(dtype=ti.f32, shape=(nx, ny, 9))
+f_next = ti.field(dtype=ti.f32, shape=(nx, ny, 9))
 
-# Cylinder obstacle
-cylinder_x = nx // 3    # Cylinder position x
-cylinder_y = ny // 2    # Cylinder position y
-cylinder_r = ny // 8    # Cylinder radius
+# Lattice properties
+c_x = ti.field(dtype=ti.f32, shape=9)
+c_y = ti.field(dtype=ti.f32, shape=9)
+w = ti.field(dtype=ti.f32, shape=9)
+opposite = ti.field(dtype=ti.i32, shape=9)
 
+# Obstacle parameters
+cylinder_x, cylinder_y = nx // 3, ny // 2
+cylinder_r = ny // 8
 a, b = 0.041, 0.272
+mask = ti.field(dtype=ti.i32, shape=(nx, ny))
+
+# Simulation parameters
+max_steps = 2000  # Reduced for reasonable gif size
+ramp_steps = 100  # Number of steps to ramp up the velocity
+show_every = 10
 
 
 @ti.kernel
 def init_d2q9_constants():
-    # D2Q9 velocities
-    for i in ti.static(range(9)):
-        # Velocity set
-        if i == 0:      # Rest
-            c_x[i], c_y[i] = 0, 0
-            opposite[i] = 0
-        elif i == 1:    # Right
-            c_x[i], c_y[i] = 1, 0
-            opposite[i] = 3
-        elif i == 2:    # Top
-            c_x[i], c_y[i] = 0, 1
-            opposite[i] = 4
-        elif i == 3:    # Left
-            c_x[i], c_y[i] = -1, 0
-            opposite[i] = 1
-        elif i == 4:    # Bottom
-            c_x[i], c_y[i] = 0, -1
-            opposite[i] = 2
-        elif i == 5:    # Top-right
-            c_x[i], c_y[i] = 1, 1
-            opposite[i] = 7
-        elif i == 6:    # Top-left
-            c_x[i], c_y[i] = -1, 1
-            opposite[i] = 8
-        elif i == 7:    # Bottom-left
-            c_x[i], c_y[i] = -1, -1
-            opposite[i] = 5
-        else:          # Bottom-right
-            c_x[i], c_y[i] = 1, -1
-            opposite[i] = 6
-
-    # D2Q9 weights
-    w[0] = 4.0 / 9.0   # Rest
-    for i in ti.static(range(1, 5)):  # Cardinals
-        w[i] = 1.0 / 9.0
-    for i in ti.static(range(5, 9)):  # Diagonals
-        w[i] = 1.0 / 36.0
+    # Initialize D2Q9 lattice velocities and weights
+    c_x[0], c_y[0], w[0], opposite[0] = 0, 0, 4.0 / 9.0, 0
+    c_x[1], c_y[1], w[1], opposite[1] = 1, 0, 1.0 / 9.0, 3
+    c_x[2], c_y[2], w[2], opposite[2] = 0, 1, 1.0 / 9.0, 4
+    c_x[3], c_y[3], w[3], opposite[3] = -1, 0, 1.0 / 9.0, 1
+    c_x[4], c_y[4], w[4], opposite[4] = 0, -1, 1.0 / 9.0, 2
+    c_x[5], c_y[5], w[5], opposite[5] = 1, 1, 1.0 / 36.0, 7
+    c_x[6], c_y[6], w[6], opposite[6] = -1, 1, 1.0 / 36.0, 8
+    c_x[7], c_y[7], w[7], opposite[7] = -1, -1, 1.0 / 36.0, 5
+    c_x[8], c_y[8], w[8], opposite[8] = 1, -1, 1.0 / 36.0, 6
 
 
 @ti.func
 def equilibrium(rho_local, ux_local, uy_local, k):
     cu = c_x[k] * ux_local + c_y[k] * uy_local
-    usqr = ux_local * ux_local + uy_local * uy_local
-    return w[k] * rho_local * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
+    usqr = ux_local**2 + uy_local**2
+    return w[k] * rho_local * (1.0 + 3.0 * cu + 4.5 * cu**2 - 1.5 * usqr)
 
 
 @ti.func
@@ -122,27 +102,18 @@ def inverse_joukowski_transform(alpha, beta):
 
 @ti.func
 def is_in_cylinder(x, y):
-    dx = x - cylinder_x
-    dy = y - cylinder_y
-    return ti.cast(dx * dx + dy * dy <= cylinder_r * cylinder_r, ti.i32)
+    dx, dy = x - cylinder_x, y - cylinder_y
+    return ti.cast(dx**2 + dy**2 <= cylinder_r**2, ti.i32)
 
 
 @ti.func
 def is_in_egg(x, y):
-    x_shifted = float(x) - cylinder_x
-    y_shifted = float(y) - cylinder_y
-
-    r_squared = x_shifted * x_shifted + y_shifted * y_shifted
-    z_squared = r_squared
-
-    discriminant = ti.sqrt(ti.abs(z_squared - 4.0))
-
+    x_shifted, y_shifted = x - cylinder_x, y - cylinder_y
+    r_squared = x_shifted**2 + y_shifted**2
+    discriminant = ti.sqrt(ti.abs(r_squared - 4.0))
     zeta_x = (x_shifted - discriminant) * 0.5
     zeta_y = (y_shifted - discriminant) * 0.5
-
-    zeta_r_squared = zeta_x * zeta_x + zeta_y * zeta_y
-
-    return ti.cast(zeta_r_squared <= cylinder_r * cylinder_r, ti.i32)
+    return ti.cast(zeta_x**2 + zeta_y**2 <= cylinder_r**2, ti.i32)
 
 
 @ti.func
@@ -157,11 +128,11 @@ def is_in_airfoil(alpha, beta):
 @ti.func
 def is_in_obstacle(x, y):
     result = 0
-    if obstacle == "cylinder":
+    if obstacle == CYLINDER:
         result = is_in_cylinder(x, y)
-    elif obstacle == "egg":
+    elif obstacle == EGG:
         result = is_in_egg(x, y)
-    elif obstacle == "airfoil":
+    elif obstacle == AIRFOIL:
         result = is_in_airfoil(x, y)
     return result
 
@@ -171,10 +142,8 @@ def initialize():
     for i, j in rho:
         # Initialize density to reference density everywhere
         rho[i, j] = rho0
-
         # Initialize all velocities to zero
-        u_x[i, j] = 0.0
-        u_y[i, j] = 0.0
+        u_x[i, j], u_y[i, j] = 0.0, 0.0
 
         # Set cylinder boundary conditions
         # if is_in_obstacle(i, j):
@@ -183,7 +152,7 @@ def initialize():
 
         # Initialize distribution functions to equilibrium
         for k in range(9):
-            f[i, j, k] = equilibrium(rho[i, j], u_x[i, j], u_y[i, j], k)
+            f[i, j, k] = equilibrium(rho0, 0.0, 0.0, k)
             f_next[i, j, k] = f[i, j, k]
 
 
@@ -192,8 +161,7 @@ def apply_inlet_conditions(current_u_max: float):
     # Apply inlet conditions with current ramped velocity
     for j in range(ny):
         rho[0, j] = rho0
-        u_x[0, j] = current_u_max
-        u_y[0, j] = 0.0
+        u_x[0, j], u_y[0, j] = current_u_max, 0.0
         for k in range(9):
             f[0, j, k] = equilibrium(rho0, current_u_max, 0.0, k)
 
@@ -203,22 +171,17 @@ def collide():
     for i, j in rho:
         if not is_in_obstacle(i, j):
             # Calculate macroscopic quantities
-            r = 0.0
-            u = 0.0
-            v = 0.0
+            r, u, v = 0.0, 0.0, 0.0
             for k in range(9):
                 r += f[i, j, k]
                 u += c_x[k] * f[i, j, k]
                 v += c_y[k] * f[i, j, k]
 
             if r > 1e-10:
-                u /= r
-                v /= r
+                u, v = u / r, v / r
 
             # Store macroscopic quantities
-            rho[i, j] = r
-            u_x[i, j] = u
-            u_y[i, j] = v
+            rho[i, j], u_x[i, j], u_y[i, j] = r, u, v
 
             # Collision
             for k in range(9):
@@ -232,8 +195,7 @@ def stream():
     for i, j, k in f:
         if not is_in_obstacle(i, j):
             # Calculate destination
-            ni = i + int(c_x[k])
-            nj = j + int(c_y[k])
+            ni, nj = i + int(c_x[k]), j + int(c_y[k])
 
             # Handle boundaries
             if 0 <= ni < nx and 0 <= nj < ny:
@@ -268,11 +230,9 @@ def apply_wall_conditions():
     # Top and bottom walls
     for i in range(nx):
         # Bottom wall (j = 0)
-        u_x[i, 0] = 0.0
-        u_y[i, 0] = 0.0
+        u_x[i, 0], u_y[i, 0] = 0.0, 0.0
         # Top wall (j = ny-1)
-        u_x[i, ny - 1] = 0.0
-        u_y[i, ny - 1] = 0.0
+        u_x[i, ny - 1], u_y[i, ny - 1] = 0.0, 0.0
 
 
 @ti.kernel
@@ -280,12 +240,6 @@ def generate_mask():
     for i, j in ti.ndrange(nx, ny):
         # Assign 1 if inside, 0 if outside
         mask[i, j] = is_in_obstacle(i, j)
-        # x, y = airfoil_transform(i, j)
-        # mask[x, y] = is_in_cylinder(i, j)
-
-
-# Use integer type for cylinder mask
-mask = ti.field(dtype=ti.i32, shape=(nx, ny))
 
 
 def create_frame(step):
@@ -347,10 +301,6 @@ def simulate():
     init_d2q9_constants()
     initialize()
 
-    # Simulation parameters
-    max_steps = 2000  # Reduced for reasonable gif size
-    ramp_steps = 100  # Number of steps to ramp up the velocity
-
     # List to store frames
     frames = []
 
@@ -372,7 +322,7 @@ def simulate():
         apply_wall_conditions()
 
         # Save frame every 10 steps
-        if step % 10 == 0:
+        if step % show_every == 0:
             print(f"Step {step}/{max_steps}")
             frames.append(create_frame(step))
 
