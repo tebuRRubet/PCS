@@ -21,7 +21,7 @@ rho_init = 1.0
 f_init = rho_init / 9
 grid = np.full((n, n, 9), f_init)
 
-grid[n//2, 0, 5] += 1
+grid[n//2, 0, 5] += 100
 grid[n//2 + 10, -1, 3] += 0.2
 
 
@@ -34,7 +34,7 @@ def streaming(vals):
 
 def collision(vals, tau=5):
     rho = np.sum(vals, axis=2)
-    w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 9
+    w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 64
     u = np.tensordot(vals, coords, axes=([2], [0]))
     u = np.divide(u, rho[:, :, None], where=rho[:, :, None] != 0, out=np.zeros_like(u))
     # for y in range(n):
