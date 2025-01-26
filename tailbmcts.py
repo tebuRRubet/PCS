@@ -52,11 +52,19 @@ class LBM:
         #         self.grid[i, j] =
 
         self.init_grid()
+
+
+
         for i in (0, self.n - 1):
             for j in range(self.n):
                 self.boundary[i, j] = 1
                 self.grid[i, j].fill(0)
 
+        for i in range(450, 550):
+            for j in range(450, 550):
+                # if i ** 2 + j ** 2 < 100 ** 2:
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
 
         for j in (0, self.n - 1):
             for i in range(self.n):
@@ -140,6 +148,7 @@ class LBM:
                     # print(self.reverse_vector(self.update_grid[i, j]))
                     # print()
                 self.grid[i, j] = self.reverse_vector(self.update_grid[i, j])
+                self.u[i, j] = tm.vec2([0, 0])
             else:
                 self.grid[i, j] = self.update_grid[i, j]
 
@@ -176,6 +185,8 @@ class LBM:
             norm_val = ti.min(ti.max(norm_val, 0), 255)
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * 255)
+                if self.boundary[i, j]:
+                    self.rgb_image[i, j][c] = 255
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
