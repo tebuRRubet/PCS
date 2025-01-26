@@ -1,6 +1,9 @@
 import taichi as ti
 import imageio
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 ti.init(arch=ti.gpu)
 
@@ -19,7 +22,7 @@ CYLINDER = 0
 EGG = 1
 AIRFOIL = 2
 
-obstacle = AIRFOIL
+obstacle = EGG
 
 # Fields and constants
 rho = ti.field(dtype=ti.f32, shape=(nx, ny))
@@ -101,7 +104,7 @@ def inverse_joukowski_transform(alpha, beta):
 @ti.func
 def is_in_cylinder(x, y):
     dx, dy = x - cylinder_x, y - cylinder_y
-    return ti.cast(dx**2 + dy**2 <= cylinder_r**2, ti.i32)
+    return ti.cast(distance(dx, dy, 0, 0) <= cylinder_r**2, ti.i32)
 
 
 @ti.func
@@ -118,8 +121,8 @@ def is_in_egg(x, y):
 def is_in_airfoil(alpha, beta):
     alpha2, beta2 = glt(alpha, beta)
     x1, y1, x2, y2 = inverse_joukowski_transform(alpha2, beta2)
-    check1 = distance(a, b, x1, y1) <= 1
-    check2 = distance(a, b, x2, y2) <= 1
+    check1 = distance(x1, y1, a, b) <= 1
+    check2 = distance(x2, y2, a, b) <= 1
     return ti.cast(not (check1 or check2), ti.i32)
 
 
@@ -143,11 +146,6 @@ def initialize():
         # Initialize all velocities to zero
         u_x[i, j], u_y[i, j] = 0.0, 0.0
 
-        # Set cylinder boundary conditions
-        # if is_in_obstacle(i, j):
-        #     u_x[i, j] = 0.0
-        #     u_y[i, j] = 0.0
-
         # Initialize distribution functions to equilibrium
         for k in range(9):
             f[i, j, k] = equilibrium(rho0, 0.0, 0.0, k)
@@ -165,9 +163,9 @@ def apply_inlet_conditions(current_u_max: float):
 
 
 @ti.kernel
-def collide():
+def collide(mask: ti.types.ndarray(dtype=ti.i32, ndim=2)):
     for i, j in rho:
-        if not is_in_obstacle(i, j):
+        if not mask[i, j]:
             # Calculate macroscopic quantities
             r, u, v = 0.0, 0.0, 0.0
             for k in range(9):
@@ -188,16 +186,16 @@ def collide():
 
 
 @ti.kernel
-def stream():
+def stream(mask: ti.types.ndarray(dtype=ti.i32, ndim=2)):
     # Streaming step
     for i, j, k in f:
-        if not is_in_obstacle(i, j):
+        if not mask[i, j]:
             # Calculate destination
             ni, nj = i + int(c_x[k]), j + int(c_y[k])
 
             # Handle boundaries
             if 0 <= ni < nx and 0 <= nj < ny:
-                if not is_in_obstacle(ni, nj):
+                if not mask[ni, nj]:
                     f[ni, nj, k] = f_next[i, j, k]
                 else:
                     # Bounce-back on cylinder
@@ -240,11 +238,7 @@ def generate_mask():
         mask[i, j] = is_in_obstacle(i, j)
 
 
-def create_frame(step):
-    import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-
+def create_frame(step, mask):
     # Create figure
     fig = Figure(figsize=(20, 5), dpi=100)
     canvas = FigureCanvasAgg(fig)
@@ -267,14 +261,10 @@ def create_frame(step):
     ax.quiver(x, y, ux[::skip, ::skip].T, uy[::skip, ::skip].T,
               scale=5, color='white', alpha=0.3)
 
-    # Generate cylinder mask and visualize it
-    generate_mask()
-    mask_np = mask.to_numpy()
-
     # Overlay cylinder on the plot
     for i in range(nx):
         for j in range(ny):
-            if mask_np[i, j] == 1:
+            if mask[i, j] == 1:
                 ax.plot(i, j, 'wo', markersize=1)
 
     ax.set_xlabel('x')
@@ -299,11 +289,14 @@ def simulate():
     init_d2q9_constants()
     initialize()
 
+    generate_mask()
+    mask_np = mask.to_numpy()
+
     # List to store frames
     frames = []
 
     # Main loop
-    for step in range(max_steps):
+    for step in range(max_steps + show_every):
         # Calculate current inlet velocity during ramp-up
         if step < ramp_steps:
             current_u_max = u_max * (step / ramp_steps)
@@ -314,15 +307,15 @@ def simulate():
         apply_inlet_conditions(current_u_max)
 
         # Main simulation steps
-        collide()
-        stream()
+        collide(mask_np)
+        stream(mask_np)
         apply_outlet_conditions()
         apply_wall_conditions()
 
         # Save frame every 10 steps
         if step % show_every == 0:
             print(f"Step {step}/{max_steps}")
-            frames.append(create_frame(step))
+            frames.append(create_frame(step, mask_np))
 
     # Save as GIF
     print("Saving animation...")
