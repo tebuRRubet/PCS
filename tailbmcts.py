@@ -1,11 +1,11 @@
 import taichi as ti
 import taichi.math as tm
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 
 ti.init(arch=ti.gpu)
+
 
 def precompute_colormap():
     import matplotlib.cm as cm
