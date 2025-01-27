@@ -28,20 +28,20 @@ class LBM:
         for i in range(9):
             self.coords[i] = coords[i]
         self.n = n
-        self.disp = ti.field(dtype=ti.f64, shape=(n, n))
-        self.grid = ti.Vector.field(n=9, dtype=ti.f64, shape=(n, n))
-        self.update_grid = ti.Vector.field(n=9, dtype=ti.f64, shape=(n, n))
+        self.disp = ti.field(dtype=ti.f32, shape=(n, n))
+        self.grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
+        self.update_grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
         self.tau = tau
         self.tau_inv = 1 / tau
-        self.u = ti.Vector.field(n=2, dtype=ti.f64, shape=(n, n))
-        self.w = ti.field(dtype=ti.f64, shape=(9,))
+        self.u = ti.Vector.field(n=2, dtype=ti.f32, shape=(n, n))
+        self.w = ti.field(dtype=ti.f32, shape=(9,))
         w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36
         self.w.from_numpy(w)
-        self.colormap = ti.Vector.field(3, dtype=ti.f64, shape=(256,))
+        self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
-        self.max_val = ti.field(ti.f64, shape=())
+        self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
 
@@ -91,7 +91,6 @@ class LBM:
         for i, j in self.grid:
             for k in ti.static(range(9)):
                 self.grid[i, j][k] = self.w[k]
-            self.grid[i, j][5] = 2.3
                 # print(self.w[k])
 
     @ti.kernel
@@ -136,8 +135,6 @@ class LBM:
                 if i == 0:
                     # self.grid[i, j].fill(0)
                     self.update_grid[i, j][5] = 1
-                # if j == 999:
-                #     self.update_grid[i, j] = ti.Vector([0, 0, 1, 0, 0, 0, 0, 0, 0])
                 for k in ti.static(range(9)):
                     self.grid[i + self.coords[k].x, j + self.coords[k].y][8-k] = self.update_grid[i, j][k]
                 # self.gird[i, j].fill(0)
