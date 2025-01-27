@@ -19,7 +19,7 @@ show_every = 10
 
 # Possible obstacles
 CYLINDER, EGG, AIRFOIL = 0, 1, 2
-obstacle = EGG
+obstacle = AIRFOIL
 
 # Fields and constants
 rho = ti.field(dtype=ti.f32, shape=(nx, ny))
@@ -101,8 +101,8 @@ def inverse_joukowski_transform(alpha, beta):
 
 @ti.func
 def is_in_cylinder(x, y):
-    dx, dy = x - cylinder_x, y - cylinder_y
-    return ti.cast(distance(dx, dy, 0, 0) <= cylinder_r**2, ti.i32)
+    return ti.cast(distance(x, y, cylinder_x, cylinder_y) <= cylinder_r,
+                   ti.i32)
 
 
 @ti.func

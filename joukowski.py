@@ -16,8 +16,7 @@ def plot_joukowski(center, radius, ax1, ax2):
 
     # Plot the original circle
     ax1.clear()
-    ax1.plot(circle.real, circle.imag, 'b-', label="Original Circle")
-    ax1.scatter([1, -1], [0, 0], color='r', label="Critical Points")
+    ax1.plot(circle.real, circle.imag, 'b-', label="Original Circle \n Radius = 1; \n Center = (0.041, 0.272)")
     ax1.set_title("Original Circle")
     ax1.axis("equal")
     ax1.legend()
@@ -31,11 +30,12 @@ def plot_joukowski(center, radius, ax1, ax2):
 
 
 # Initial parameters
-initial_center = (-0.2, 0.2)
+initial_center = (0.041, 0.272)
 initial_radius = 1.0
 
 # Create the figure and axes
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+plt.subplots_adjust(bottom=0.15)
 
 # Plot initial setup
 plot_joukowski(initial_center, initial_radius, ax1, ax2)
