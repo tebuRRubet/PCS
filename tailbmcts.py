@@ -33,7 +33,7 @@ class LBM:
         self.update_grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
         self.tau = tau
         self.tau_inv = 1 / tau
-        self.u = ti.Vector.field(n=2, dtype=ti.f32, shape=(n, n))
+        self.u = ti.field(dtype=ti.f32, shape=(n, n))
         self.w = ti.field(dtype=ti.f32, shape=(9,))
         w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36
         self.w.from_numpy(w)
@@ -108,7 +108,7 @@ class LBM:
                 u += self.coords[k] * self.grid[i, j][k]
 
             u = (u / rho) if rho > 0 else tm.vec2([0, 0])
-            self.u[i, j] = u
+            self.u[i, j] = u.norm()
             # print("Done")
             for k in ti.static(range(9)):
                 feq = self.w[k] * rho * (1 + 3 * tm.dot(self.coords[k], u) + 4.5 * tm.dot(self.coords[k], u) ** 2 - 1.5 * tm.dot(u, u))
@@ -150,12 +150,6 @@ class LBM:
         for i, j in self.update_grid:
             self.grid[i, j] = self.update_grid[i, j]
 
-    @ti.kernel
-    def get_velocity_magnitude(self):
-        for i, j in self.grid:
-            self.disp[i, j] = self.u[i, j].norm()
-            # self.disp[i, j] = self.grid[i, j].sum()
-
     def apply_colormap(self, data):
         norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
         colormap = cm.viridis(norm_data)
@@ -164,16 +158,16 @@ class LBM:
     @ti.kernel
     def normalize_and_map(self):
         # print(self.total_density())
-        for i, j in self.disp:
-            self.max_val[None] = ti.max(self.max_val[None], self.disp[i, j])
+        for i, j in self.u:
+            self.max_val[None] = ti.max(self.max_val[None], self.u[i, j])
         curr_max = 1e-8
-        for i, j in self.disp:
-            curr_max = ti.max(curr_max, self.disp[i, j])
+        for i, j in self.u:
+            curr_max = ti.max(curr_max, self.u[i, j])
         # print(self.max_val[None], curr_max)
 
-        for i, j in self.disp:
-            norm_val = ti.cast(self.disp[i, j] / self.max_val[None] * (255), ti.i32)
-            norm_val = ti.cast(self.disp[i, j] / curr_max * (255), ti.i32)
+        for i, j in self.u:
+            norm_val = ti.cast(self.u[i, j] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
@@ -233,7 +227,6 @@ class LBM:
             # gui.show()
 
 
-            self.get_velocity_magnitude()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()

@@ -92,5 +92,5 @@ while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
 
 
     stream()
-    collide()
+    # collide()
     update_grid()
