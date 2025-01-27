@@ -79,8 +79,8 @@ def update_grid():
 @ti.kernel
 def get_density_disp():
     for i, j in f:
-        # disp[i, j] = u_field[i, j].norm()
-        disp[i, j] = f[i, j].sum()
+        disp[i, j] = u_field[i, j].norm()
+        # disp[i, j] = f[i, j].sum()
 
 
 if m == 10:
@@ -101,4 +101,7 @@ while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     stream()
     collide()
     update_grid()
-    time.sleep(0.02)
+    disp_np = disp.to_numpy()
+    print([row for row in disp_np])
+    print("YOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
+    time.sleep(0.1)
