@@ -20,7 +20,7 @@ def precompute_colormap():
 @ti.data_oriented
 class LBM:
     def __init__(self, n=1000, tau=5):
-        # tau = 10
+        tau = 15
         coords = [(-1, 1), (0, 1), (1, 1),
                   (-1, 0), (0, 0), (1, 0),
                   (-1, -1), (0, -1), (1, -1)]
@@ -28,39 +28,40 @@ class LBM:
         for i in range(9):
             self.coords[i] = coords[i]
         self.n = n
-        self.disp = ti.field(dtype=ti.f32, shape=(n, n))
-        self.grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
-        self.update_grid = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
+        self.disp = ti.field(dtype=ti.f64, shape=(n, n))
+        self.grid = ti.Vector.field(n=9, dtype=ti.f64, shape=(n, n))
+        self.update_grid = ti.Vector.field(n=9, dtype=ti.f64, shape=(n, n))
         self.tau = tau
         self.tau_inv = 1 / tau
-        self.u = ti.Vector.field(n=2, dtype=ti.f32, shape=(n, n))
-        self.w = ti.field(dtype=ti.f32, shape=(9,))
+        self.u = ti.Vector.field(n=2, dtype=ti.f64, shape=(n, n))
+        self.w = ti.field(dtype=ti.f64, shape=(9,))
         w = np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36
         self.w.from_numpy(w)
-        self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
+        self.colormap = ti.Vector.field(3, dtype=ti.f64, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
-        self.max_val = ti.field(ti.f32, shape=())
+        self.max_val = ti.field(ti.f64, shape=())
         self.max_val.fill(1e-8)
         self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
 
         self.init_grid()
 
         # for i in (0, self.n - 1):
-        #     for j in range(self.n):
-        #         self.boundary[i, j] = 1
-        #         self.grid[i, j].fill(0)
+        for i in (0,):
+            for j in range(self.n):
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
 
-        # for j in (0, self.n - 1):
-        #     for i in range(self.n):
-        #         self.boundary[i, j] = 1
-        #         self.grid[i, j].fill(0)
+        for j in (0, self.n - 1):
+            for i in range(self.n):
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
 
-        # for i in range(450, 550):
-        #     for j in range(450, 550):
-        #         self.boundary[i, j] = 1
-        #         self.grid[i, j].fill(0)
+        for i in range(450- 300, 550-300):
+            for j in range(450, 550):
+                self.boundary[i, j] = 1
+                self.grid[i, j].fill(0)
 
 
         # for i in range(-10, 11):
@@ -76,13 +77,13 @@ class LBM:
 
         self.grid.fill(1/9)
         self.grid.fill(0)
-        for i in range(-10, 11):
-            for j in range(-10, 11):
-                if i**2 + j ** 2 < 200:
-                    for k in range(9):
-                        self.grid[n//2 + j, n//2 + i][k] += w[k]
-        print("Init done")
         self.init_grid()
+        # for i in range(-10, 11):
+        #     for j in range(-10, 11):
+        #         if i**2 + j ** 2 < 200:
+        #             for k in range(1):
+        #                 self.grid[-100 + n//2 + j, n//2 + i][5] += w[k]
+        print("Init done")
 
 
     @ti.kernel
@@ -90,6 +91,7 @@ class LBM:
         for i, j in self.grid:
             for k in ti.static(range(9)):
                 self.grid[i, j][k] = self.w[k]
+            self.grid[i, j][5] = 2.3
                 # print(self.w[k])
 
     @ti.kernel
@@ -108,6 +110,7 @@ class LBM:
 
             u = (u / rho) if rho > 0 else tm.vec2([0, 0])
             self.u[i, j] = u
+            # print("Done")
             for k in ti.static(range(9)):
                 feq = self.w[k] * rho * (1 + 3 * tm.dot(self.coords[k], u) + 4.5 * tm.dot(self.coords[k], u) ** 2 - 1.5 * tm.dot(u, u))
                 # if self.n > i + self.coords[k].x >= 0 and self.n > j + self.coords[k].y >= 0:
@@ -130,12 +133,14 @@ class LBM:
     def bounce_boundary(self):
         for i, j in self.grid:
             if self.boundary[i, j]:
-                # if i == 0:
-                #     self.grid[i, j].fill(0)
-                #     self.grid[i, j][5] = 1
-                # else:
+                if i == 0:
+                    # self.grid[i, j].fill(0)
+                    self.update_grid[i, j][5] = 1
+                # if j == 999:
+                #     self.update_grid[i, j] = ti.Vector([0, 0, 1, 0, 0, 0, 0, 0, 0])
                 for k in ti.static(range(9)):
                     self.grid[i + self.coords[k].x, j + self.coords[k].y][8-k] = self.update_grid[i, j][k]
+                # self.gird[i, j].fill(0)
                 # self.grid[i, j] = self.reverse_vector(self.update_grid[i, j])
                 # self.u[i, j] = tm.vec2([0, 0])
             else:
@@ -152,7 +157,7 @@ class LBM:
     def get_velocity_magnitude(self):
         for i, j in self.grid:
             self.disp[i, j] = self.u[i, j].norm()
-            # self.disp[i, j] = tm.dot(ti.Vector([1] * 9), self.grid[i, j])
+            # self.disp[i, j] = self.grid[i, j].sum()
 
     def apply_colormap(self, data):
         norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
@@ -161,16 +166,18 @@ class LBM:
 
     @ti.kernel
     def normalize_and_map(self):
-        print(self.total_density())
+        # print(self.total_density())
         for i, j in self.disp:
             self.max_val[None] = ti.max(self.max_val[None], self.disp[i, j])
-        # curr_max = 1e-8
-        # for i, j in self.disp:
-        #     curr_max = ti.max(curr_max, self.disp[i, j])
+        curr_max = 1e-8
+        for i, j in self.disp:
+            curr_max = ti.max(curr_max, self.disp[i, j])
         # print(self.max_val[None], curr_max)
 
         for i, j in self.disp:
             norm_val = ti.cast(self.disp[i, j] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.disp[i, j] / curr_max * (255), ti.i32)
+
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
@@ -202,6 +209,7 @@ class LBM:
                 u /= rho
             else:
                 u = tm.vec2([0, 0])
+            self.u[i, j] = u
             for k in range(9):
                 feq = self.w[k] * rho * (1 + 3 * tm.dot(self.coords[k], u) + 4.5 * tm.dot(self.coords[k], u) ** 2 - 1.5 * tm.dot(u, u))
                 self.update_grid[i, j][k] += self.tau_inv * (feq - self.update_grid[i, j][k])
@@ -218,22 +226,23 @@ class LBM:
         self.update_grid.copy_from(self.grid)
         self.stream()
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
-            self.stream_new()
-            self.collide_new()
-            self.update()
-            self.display_new()
-            gui.set_image(self.disp)
-            gui.show()
-
-
-
-
+            # self.stream_new()
+            # self.collide_new()
+            # self.update()
+            # self.bounce_boundary()
             # self.get_velocity_magnitude()
             # self.normalize_and_map()
             # gui.set_image(self.rgb_image)
             # gui.show()
-            # self.collide_and_stream()
-            # self.bounce_boundary()
+
+
+            self.get_velocity_magnitude()
+            self.normalize_and_map()
+            gui.set_image(self.rgb_image)
+            gui.show()
+            self.collide_and_stream()
+            # self.update()
+            self.bounce_boundary()
 
 
 L = LBM()
