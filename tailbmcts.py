@@ -8,6 +8,7 @@ ti.init(arch=ti.gpu)
 
 CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
+
 def precompute_colormap():
     import matplotlib.cm as cm
     viridis = cm.get_cmap('viridis', 256)
@@ -79,7 +80,7 @@ class LBM:
             for j in range(-10, 11):
                 if i**2 + j ** 2 < 200:
                     for k in range(1):
-                        self.f1[-100 + n//2 + j, n//2 + i][5] += self.w[k]
+                        self.f1[-100 + n // 2 + j, n // 2 + i][5] += self.w[k]
         print("Init done")
 
     # @ti.kernel
@@ -101,28 +102,23 @@ class LBM:
                 self.f1[i, j][k] = feq
             self.boundary[i, j] = self.is_in_obstacle(i, j)
 
-
     @ti.func
     def distance(self, x1, y1, x2, y2):
         return ti.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-
 
     @ti.func
     def glt(self, x, y):
         return ((x - self.cylinder_x) / self.cylinder_r) + self.a, \
             ((y - self.cylinder_y) / self.cylinder_r) + self.b
 
-
     @ti.func
     def inverse_glt(self, x, y):
         return self.cylinder_r * (x - self.a) + self.cylinder_x, self.cylinder_r * (y - self.b) + self.cylinder_y
-
 
     @ti.func
     def joukowski_transform(self, x, y):
         r = x**2 + y**2
         return x * (1 + 1 / r), y * (1 - 1 / r)
-
 
     @ti.func
     def inverse_joukowski_transform(self, alpha, beta):
@@ -137,12 +133,9 @@ class LBM:
         y2 = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
         return x1, y1, x2, y2
 
-
     @ti.func
     def is_in_cylinder(self, x, y):
-        dx, dy = x - self.cylinder_x, y - self.cylinder_y
-        return ti.cast(self.distance(dx, dy, 0, 0) <= self.cylinder_r**2, ti.i32)
-
+        return ti.cast(self.distance(x, y, self.cylinder_x, self.cylinder_y) <= self.cylinder_r, ti.i32)
 
     @ti.func
     def is_in_egg(self, x, y):
@@ -153,7 +146,6 @@ class LBM:
         zeta_y = (y_shifted - discriminant) * 0.5
         return ti.cast(zeta_x**2 + zeta_y**2 <= self.cylinder_r**2, ti.i32)
 
-
     @ti.func
     def is_in_airfoil(self, alpha, beta):
         alpha2, beta2 = self.glt(alpha, beta)
@@ -161,7 +153,6 @@ class LBM:
         check1 = self.distance(x1, y1, self.a, self.b) <= 1
         check2 = self.distance(x2, y2, self.a, self.b) <= 1
         return ti.cast(not (check1 or check2), ti.i32)
-
 
     @ti.func
     def is_in_obstacle(self, x, y):
@@ -174,8 +165,6 @@ class LBM:
             result = self.is_in_airfoil(x, y)
         return result
 
-
-
     @ti.kernel
     def stream(self):
         for i, j in ti.ndrange((1, self.n - 1), (1, self.n - 1)):
@@ -186,8 +175,8 @@ class LBM:
     def collide_and_stream(self):
         for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
             rho = self.f1[i, j].sum()
-            if i == 20 and j == 30:
-                print(rho)
+            # if i == 20 and j == 30:
+            #     print(rho)
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho) if rho > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
