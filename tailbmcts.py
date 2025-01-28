@@ -11,7 +11,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 def precompute_colormap():
     import matplotlib.cm as cm
-    viridis = cm.get_cmap('viridis', 256)
+    viridis = cm.get_cmap('flag', 256)
     # Extract RGB values
     colors = np.roll(viridis(np.linspace(0, 1, 256))[:, :3], 3)
     return colors.astype(np.float32)
@@ -19,8 +19,8 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, tau=5.0, rho0=1.0):
-        tau = 15
+    def __init__(self, n=1000, tau=0.55, rho0=1.0):
+        self.rho0 = rho0
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
                                (-1, -1), (0, -1), (1, -1)]).transpose()
@@ -48,7 +48,7 @@ class LBM:
         self.b = 0.272
 
         # for i in (0, self.n - 1):
-        for i in (0, n - 1):
+        for i in (0,):
             for j in range(self.n):
                 self.boundary[i, j] = 1
                 self.f1[i, j].fill(0)
@@ -58,11 +58,11 @@ class LBM:
         #         self.boundary[i, j] = 1
         #         self.f1[i, j].fill(0)
 
-        # for i in range(450 - 300, 550-300):
-        #     for j in range(450, 550):
-        #         if
-        #         self.boundary[i, j] = 1
-        #         self.f1[i, j].fill(0)
+        for i in range(-50, 51):
+            for j in range(-50, 51):
+                if i ** 2 + j ** 2 < 50 ** 2:
+                    self.boundary[i + 450, j+ 450] = 1
+                    self.f1[i, j].fill(0)
 
         # for i in range(-10, 11):
         #     for j in range(-10, 11):
@@ -76,11 +76,11 @@ class LBM:
         #             self.grid[n//2 + j, n//2 + i + 200][1] += 1
 
         self.init_grid(rho0)
-        for i in range(-10, 11):
-            for j in range(-10, 11):
-                if i**2 + j ** 2 < 200:
-                    for k in range(1):
-                        self.f1[-100 + n // 2 + j, n // 2 + i][5] += self.w[k]
+        # for i in range(-10, 11):
+        #     for j in range(-10, 11):
+        #         if i**2 + j ** 2 < 200:
+        #             for k in range(1):
+        #                 self.f1[-100 + n // 2 + j, n // 2 + i][5] += self.w[k]
         print("Init done")
 
     # @ti.kernel
@@ -89,17 +89,28 @@ class LBM:
     #         for k in ti.static(range(9)):
     #             self.f1[i, j][k] = self.w[k]
 
+    @ti.func
+    def feq(self, weight, rho, cm, vel):
+        return weight * rho * (1 + 3 * cm + 4.5 * cm **2 - 1.5 * vel)
+
     @ti.kernel
-    def init_grid(self, rho0: ti.Types.f64):
+    def init_grid(self, rho0: ti.types.f64):
         for i, j in self.f1:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
+            if self.is_in_obstacle(i, j):
+                self.boundary[i, j] = 1
+                # self.f1[i, j].fill(0)
+            # else:
+            #     for k in ti.static(range(9)):
+            #         cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
+            #         feq = self.w[k] * rho0 * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
+            #         self.f1[i, j][k] = feq
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
                 feq = self.w[k] * rho0 * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
-                self.f1[i, j][k] = feq
-            self.boundary[i, j] = self.is_in_obstacle(i, j)
+                self.f1[i, j][k] = self.feq(self.w[k], rho0, cm, tm.dot(vel, vel))
 
     @ti.func
     def distance(self, x1, y1, x2, y2):
@@ -182,7 +193,7 @@ class LBM:
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
                 feq = self.w[k] * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
-                self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = (1 - self.tau_inv) * self.f1[i, j][k] + self.tau_inv * feq
+                self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = (1 - self.tau_inv) * self.f1[i, j][k] + self.tau_inv * self.feq(self.w[k], rho, cm, tm.dot(vel, vel))
 
     @ti.func
     def total_density(self):
@@ -201,6 +212,9 @@ class LBM:
             if self.boundary[i, j]:
                 if i == 0:
                     # self.grid[i, j].fill(0)
+                    vel = (self.dirs @ self.f1[i, j] / self.rho0) if ti.static(self.rho0 > 0) else tm.vec2([0, 0])
+                    cm = vel[0] * self.dirs[0, 5]
+                    self.f2[i, j][5] = self.feq(self.w[5], self.rho0, cm, tm.dot(vel, vel))
                     self.f2[i, j][5] = 0.15
                 if i == self.n - 1:
                     # self.update_grid[i, j] = ti.Vector([0] * 9)
@@ -277,7 +291,7 @@ class LBM:
             for k in range(9):
                 cm = u[0] * self.dirs[k, 0] + u[1] * self.dirs[k, 1]
                 feq = self.w[k] * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(u, u))
-                self.f2[i, j][k] += self.tau_inv * (feq - self.f2[i, j][k])
+                self.f2[i, j][k] += self.tau_inv * (self.feq(self.w[k], rho, cm, tm.dot(u, u)) - self.f2[i, j][k])
 
     @ti.kernel
     def display_new(self):
@@ -303,7 +317,7 @@ class LBM:
             gui.show()
             for _ in range(10):
                 self.max_vel()
-                # print(self.max_val[None])
+                print(self.max_val[None])
                 self.collide_and_stream()
                 # self.stream()
                 # self.update()
