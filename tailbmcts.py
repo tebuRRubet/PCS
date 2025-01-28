@@ -88,8 +88,14 @@ class LBM:
     #             self.f1[i, j][k] = self.w[k]
 
     @ti.func
-    def translate_scale(self, i, j, di, dj, scale):
-        return (i - di) / scale, (j - dj) / scale
+    def translate_scale(self, i, j, di, dj, scale, theta):
+        x, y = (i - di) / scale, (j - dj) /scale
+
+        theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
+        cos_theta = ti.cos(theta)
+        sin_theta = ti.sin(theta)
+        return cos_theta * x - sin_theta * y, sin_theta * x + cos_theta * y
+
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
@@ -101,7 +107,7 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = self.translate_scale(i, j, self.n//2, self.n//2, 4)
+            di, dj = self.translate_scale(i, j, self.n//2, self.n//2, 4, 45.0)
             if self.is_in_obstacle(di, dj):
                 self.boundary[i, j] = 1
                 # self.f1[i, j].fill(0)
