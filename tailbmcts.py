@@ -8,6 +8,7 @@ ti.init(arch=ti.gpu)
 
 CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
+
 def precompute_colormap():
     import matplotlib.cm as cm
     viridis = cm.get_cmap('viridis', 256)
@@ -18,7 +19,7 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, tau=5):
+    def __init__(self, n=1000, tau=5.0, rho0=1.0):
         tau = 15
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
@@ -74,7 +75,7 @@ class LBM:
         #         if i**2 + j ** 2 < 200:
         #             self.grid[n//2 + j, n//2 + i + 200][1] += 1
 
-        self.init_grid()
+        self.init_grid(rho0)
         for i in range(-10, 11):
             for j in range(-10, 11):
                 if i**2 + j ** 2 < 200:
@@ -89,15 +90,14 @@ class LBM:
     #             self.f1[i, j][k] = self.w[k]
 
     @ti.kernel
-    def init_grid(self):
+    def init_grid(self, rho0: ti.Types.f64):
         for i, j in self.f1:
-            rho = 1
             # Calculates velocity vector in one step
-            vel = (self.dirs @ self.f1[i, j] / rho) if rho > 0 else tm.vec2([0, 0])
+            vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
-                feq = self.w[k] * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
+                feq = self.w[k] * rho0 * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
                 self.f1[i, j][k] = feq
             self.boundary[i, j] = self.is_in_obstacle(i, j)
 
