@@ -11,7 +11,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 def precompute_colormap():
     import matplotlib.cm as cm
-    viridis = cm.get_cmap('flag', 256)
+    viridis = cm.get_cmap('viridis', 256)
     # Extract RGB values
     colors = np.roll(viridis(np.linspace(0, 1, 256))[:, :3], 3)
     return colors.astype(np.float32)
@@ -40,7 +40,7 @@ class LBM:
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
-        self.obstacle = CYLINDER
+        self.obstacle = AIRFOIL
         self.cylinder_x = n // 3
         self.cylinder_y = n // 2
         self.cylinder_r = n // 20
@@ -58,11 +58,11 @@ class LBM:
         #         self.boundary[i, j] = 1
         #         self.f1[i, j].fill(0)
 
-        for i in range(-50, 51):
-            for j in range(-50, 51):
-                if i ** 2 + j ** 2 < 50 ** 2:
-                    self.boundary[i + 450, j+ 450] = 1
-                    self.f1[i, j].fill(0)
+        # for i in range(-50, 51):
+        #     for j in range(-50, 51):
+        #         if i ** 2 + j ** 2 < 50 ** 2:
+        #             self.boundary[i + 450, j+ 450] = 1
+        #             self.f1[i, j].fill(0)
 
         # for i in range(-10, 11):
         #     for j in range(-10, 11):
