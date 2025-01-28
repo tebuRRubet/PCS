@@ -41,14 +41,12 @@ class LBM:
         self.max_val.fill(1e-8)
         self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
         self.obstacle = AIRFOIL
-        self.cylinder_x = n // 3
-        self.cylinder_y = n // 2
         self.cylinder_r = n // 20
         self.a = 0.041
         self.b = 0.272
 
         # for i in (0, self.n - 1):
-        for i in (0,):
+        for i in (0, 1):
             for j in range(self.n):
                 self.boundary[i, j] = 1
                 self.f1[i, j].fill(0)
@@ -90,6 +88,10 @@ class LBM:
     #             self.f1[i, j][k] = self.w[k]
 
     @ti.func
+    def translate_scale(self, i, j, di, dj, scale):
+        return (i - di) / scale, (j - dj) / scale
+
+    @ti.func
     def feq(self, weight, rho, cm, vel):
         return weight * rho * (1 + 3 * cm + 4.5 * cm **2 - 1.5 * vel)
 
@@ -99,7 +101,8 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            if self.is_in_obstacle(i, j):
+            di, dj = self.translate_scale(i, j, self.n//2, self.n//2, 4)
+            if self.is_in_obstacle(di, dj):
                 self.boundary[i, j] = 1
                 # self.f1[i, j].fill(0)
             # else:
@@ -109,8 +112,32 @@ class LBM:
             #         self.f1[i, j][k] = feq
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
-                feq = self.w[k] * rho0 * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
                 self.f1[i, j][k] = self.feq(self.w[k], rho0, cm, tm.dot(vel, vel))
+
+    def apply_colormap(self, data):
+        norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
+        colormap = cm.viridis(norm_data)
+        return (colormap[:, :, :3] * 255).astype(np.uint8)
+
+    @ti.kernel
+    def normalize_and_map(self):
+        # print(self.total_density())
+        for i, j in self.vel:
+            self.max_val[None] = ti.max(self.max_val[None], self.vel[i, j])
+        curr_max = 1e-8
+        for i, j in self.vel:
+            curr_max = ti.max(curr_max, self.vel[i, j])
+        # print(self.max_val[None], curr_max)
+
+        for i, j in self.vel:
+            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
+            # norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
+
+            norm_val = ti.min(ti.max(norm_val, 0), (255))
+            for c in ti.ndrange(3):
+                self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
+                if self.boundary[i, j]:
+                    self.rgb_image[i, j][c] = (255)
 
     @ti.func
     def distance(self, x1, y1, x2, y2):
@@ -118,12 +145,12 @@ class LBM:
 
     @ti.func
     def glt(self, x, y):
-        return ((x - self.cylinder_x) / self.cylinder_r) + self.a, \
-            ((y - self.cylinder_y) / self.cylinder_r) + self.b
+        return (x / self.cylinder_r) + self.a, \
+            (y / self.cylinder_r) + self.b
 
     @ti.func
     def inverse_glt(self, x, y):
-        return self.cylinder_r * (x - self.a) + self.cylinder_x, self.cylinder_r * (y - self.b) + self.cylinder_y
+        return self.cylinder_r * (x - self.a), self.cylinder_r * (y - self.b)
 
     @ti.func
     def joukowski_transform(self, x, y):
@@ -145,11 +172,11 @@ class LBM:
 
     @ti.func
     def is_in_cylinder(self, x, y):
-        return ti.cast(self.distance(x, y, self.cylinder_x, self.cylinder_y) <= self.cylinder_r, ti.i32)
+        return ti.cast(self.distance(x, y, 0, 0) <= self.cylinder_r, ti.i32)
 
     @ti.func
     def is_in_egg(self, x, y):
-        x_shifted, y_shifted = x - self.cylinder_x, y - self.cylinder_y
+        x_shifted, y_shifted = x, y
         r_squared = x_shifted**2 + y_shifted**2
         discriminant = ti.sqrt(ti.abs(r_squared - 4.0))
         zeta_x = (x_shifted - discriminant) * 0.5
@@ -192,7 +219,6 @@ class LBM:
             self.vel[i, j] = vel.norm()
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
-                feq = self.w[k] * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(vel, vel))
                 self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = (1 - self.tau_inv) * self.f1[i, j][k] + self.tau_inv * self.feq(self.w[k], rho, cm, tm.dot(vel, vel))
 
     @ti.func
@@ -207,15 +233,17 @@ class LBM:
         return ti.Vector([x[8 - i] for i in ti.static(range(9))])
 
     @ti.kernel
-    def bounce_boundary(self):
+    def bounce_boundary(self, step: ti.types.i16, step_max: ti.types.i16):
         for i, j in self.f1:
             if self.boundary[i, j]:
-                if i == 0:
+                if i == 0 and step < step_max:
                     # self.grid[i, j].fill(0)
                     vel = (self.dirs @ self.f1[i, j] / self.rho0) if ti.static(self.rho0 > 0) else tm.vec2([0, 0])
                     cm = vel[0] * self.dirs[0, 5]
                     self.f2[i, j][5] = self.feq(self.w[5], self.rho0, cm, tm.dot(vel, vel))
-                    self.f2[i, j][5] = 0.15
+                    self.f2[i, j][5] = 0.3
+                # elif i == 0:
+                #     self.f2[i, j][5] = -0.15
                 if i == self.n - 1:
                     # self.update_grid[i, j] = ti.Vector([0] * 9)
                     self.vel[i, j] = 0
@@ -234,30 +262,6 @@ class LBM:
         for i, j in self.f2:
             self.f1[i, j] = self.f2[i, j]
 
-    def apply_colormap(self, data):
-        norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
-        colormap = cm.viridis(norm_data)
-        return (colormap[:, :, :3] * 255).astype(np.uint8)
-
-    @ti.kernel
-    def normalize_and_map(self):
-        # print(self.total_density())
-        for i, j in self.vel:
-            self.max_val[None] = ti.max(self.max_val[None], self.vel[i, j])
-        curr_max = 1e-8
-        for i, j in self.vel:
-            curr_max = ti.max(curr_max, self.vel[i, j])
-        # print(self.max_val[None], curr_max)
-
-        for i, j in self.vel:
-            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
-            # norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
-
-            norm_val = ti.min(ti.max(norm_val, 0), (255))
-            for c in ti.ndrange(3):
-                self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
-                if self.boundary[i, j]:
-                    self.rgb_image[i, j][c] = (255)
 
     @ti.kernel
     def stream_basic(self):
@@ -272,49 +276,17 @@ class LBM:
         for i, j in self.vel:
             ti.atomic_max(self.max_val[None], self.vel[i, j])
 
-    @ti.kernel
-    def collide_basic(self):
-        # What??..........
-        for i, j in ti.ndrange((0, self.n), (0, self.n)):
-            rho = self.f2[i, j].sum()
-            u = tm.vec2([0.0, 0.0])
-            for k in ti.static(range(9)):
-                # Compiler throws error on self.dirs[k, 0] indexing. Not sure why.
-                u += self.f2[i, j][k] * tm.vec2([self.dirs[k, 0], self.dirs[k, 1]])
-            if rho != 0:
-                if rho < 0:
-                    print("Negative density?")
-                u /= rho
-            else:
-                u = tm.vec2([0, 0])
-            self.vel[i, j] = u
-            for k in range(9):
-                cm = u[0] * self.dirs[k, 0] + u[1] * self.dirs[k, 1]
-                feq = self.w[k] * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * tm.dot(u, u))
-                self.f2[i, j][k] += self.tau_inv * (self.feq(self.w[k], rho, cm, tm.dot(u, u)) - self.f2[i, j][k])
-
-    @ti.kernel
-    def display_new(self):
-        for i, j in self.f1:
-            self.disp[i, j] = self.f1[i, j].sum() / 9
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
         self.f2.copy_from(self.f1)
-        self.stream()
+        # self.stream()
+        step = 0
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
-            # self.stream_basic()
-            # self.collide_basic()
-            # self.update()
-            # self.bounce_boundary()
-            # self.get_velocity_magnitude()
-            # self.normalize_and_map()
-            # gui.set_image(self.rgb_image)
-            # gui.show()
-
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()
+            step += 1
             for _ in range(10):
                 self.max_vel()
                 print(self.max_val[None])
@@ -322,7 +294,7 @@ class LBM:
                 # self.stream()
                 # self.update()
 
-                self.bounce_boundary()
+                self.bounce_boundary(step, 100)
                 # exit()
 
 
