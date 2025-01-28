@@ -151,7 +151,7 @@ class LBM:
         curr_max = 1e-8
         for i, j in self.vel:
             curr_max = ti.max(curr_max, self.vel[i, j])
-        print(self.max_val[None], curr_max)
+        # print(self.max_val[None], curr_max)
 
         for i, j in self.vel:
             norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
@@ -172,6 +172,11 @@ class LBM:
                     self.f2[ni, nj][k] = self.f1[i, j][k]
 
     @ti.kernel
+    def max_vel(self):
+        for i, j in self.vel:
+            ti.atomic_max(self.max_val[None], self.vel[i, j])
+
+    @ti.kernel
     def collide_basic(self):
         # What??..........
         for i, j in ti.ndrange((0, self.n), (0, self.n)):
@@ -182,7 +187,7 @@ class LBM:
                 u += self.f2[i, j][k] * tm.vec2([self.dirs[k, 0], self.dirs[k, 1]])
             if rho != 0:
                 if rho < 0:
-                    print("WHAAAT THE FUUUCKKKK")
+                    print("Negative density?")
                 u /= rho
             else:
                 u = tm.vec2([0, 0])
@@ -215,10 +220,11 @@ class LBM:
             gui.set_image(self.rgb_image)
             gui.show()
             for _ in range(10):
+                self.max_vel()
+                print(self.max_val[None])
                 self.collide_and_stream()
                 # self.stream()
-                # self.update()
-                # print(self.dirs[0])
+                self.update()
 
                 self.bounce_boundary()
                 # exit()
