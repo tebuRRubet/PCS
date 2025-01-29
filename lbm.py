@@ -44,7 +44,7 @@ class LBM:
         self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
-        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
+        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n-2, n-2))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
@@ -58,7 +58,7 @@ class LBM:
         a = 0.026
         b = 0.077
         r = 0.918
-        theta = 90
+        theta = 5
         self.init_grid(rho0, obstacle, scale, a, b, r, theta)
 
     @ti.func
@@ -83,10 +83,10 @@ class LBM:
 
     @ti.kernel
     def normalize_and_map(self):
-        for i, j in self.vel:
-            self.max_val[None] = ti.atomic_max(self.max_val[None], self.vel[i, j])
-        for i, j in self.vel:
-            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
+        # for i, j in self.vel:
+        #     self.max_val[None] = ti.atomic_max(self.max_val[None], self.vel[i, j])
+        for i, j in self.rgb_image:
+            norm_val = ti.cast(self.vel[i + 1, j + 1] / self.max_val[None] * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
@@ -131,11 +131,13 @@ class LBM:
 
     @ti.kernel
     def max_vel(self):
+        curr_max = 1e-8
         for i, j in self.vel:
-            ti.atomic_max(self.max_val[None], self.vel[i, j])
+            ti.atomic_max(curr_max, self.vel[i, j])
+        self.max_val[None] = self.max_val[None] * 0.95 + curr_max * 0.05
 
     def display(self):
-        gui = ti.GUI('LBM Simulation', (self.n, self.n))
+        gui = ti.GUI('LBM Simulation', (self.n - 2, self.n - 2))
         self.f2.copy_from(self.f1)
         self.apply_inlet()
         self.stream()
@@ -146,7 +148,7 @@ class LBM:
             gui.show()
 
             for _ in range(10):
-                self.max_vel()
+                # self.max_vel()
                 self.apply_inlet()
                 self.collide_and_stream()
                 self.boundary_condition()
