@@ -174,7 +174,7 @@ class LBM:
         for i, j in self.f1:
             if self.boundary_mask[i, j]:
                 if i == 0 and step < step_max:
-                    self.f2[i, j][5] = 0.15
+                    self.f2[i, j][3] = 0.15
                 # if i == self.n - 1:
                     # self.vel[i, j] = 0
 
@@ -183,7 +183,7 @@ class LBM:
                 rv = self.reverse_vector(self.f2[i, j])
                 for k in ti.static(range(9)):
                     # self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
-                    self.f1[i + self.dirs[0, 8-k], j + self.dirs[1, 8-k]][8-k] = rv[k]
+                    self.f1[i + self.dirs[0, 8-k], j + self.dirs[1, 8-k]][8-k] = self.f2[i, j][k]
             else:
                 self.f1[i, j] = self.f2[i, j]
 
