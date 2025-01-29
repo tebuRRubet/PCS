@@ -19,16 +19,17 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1024, tau=0.55, rho0=1.0, b_types=(2, 1, 2, 1), inlet_val=0.15):
+    def __init__(self, n=1024, tau=0.55, rho0=1.0, inlet_val=0.15):
         self.rho0 = rho0
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
                                (-1, -1), (0, -1), (1, -1)]).transpose()
+        print(self.dirs)
         self.n = n
         self.disp = ti.field(dtype=ti.f32, shape=(n, n))
         self.f1 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
         self.f2 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
-        self.tau_inv = 1 / tau
+        self.tau_inv = 1 / 3
         self.vel = ti.field(dtype=ti.f32, shape=(n, n))
         self.w = ti.field(dtype=ti.f32, shape=(9,))
         self.w.from_numpy(np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36)
@@ -39,7 +40,7 @@ class LBM:
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
-        self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
+        # self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
         self.inlet_val = inlet_val
 
         # block = 128
@@ -51,22 +52,29 @@ class LBM:
         self.a = 0.041
         self.b = 0.272
 
-        for i in range(n):
-            self.boundary_mask[0, i] = b_types[0]
+        # for i in range(n):
+        #     self.boundary_mask[0, i] = b_types[0]
 
-        for i in range(n):
-            self.boundary_mask[i, n - 1] = b_types[1]
+        # for i in range(n):
+        #     self.boundary_mask[i, n - 1] = b_types[1]
 
-        for i in range(n):
-            self.boundary_mask[n - 1, i] = b_types[2]
+        # for i in range(n):
+        #     self.boundary_mask[n - 1, i] = b_types[2]
 
-        for i in range(n):
-            self.boundary_mask[i, 0] = b_types[3]
+        # for i in range(n):
+        #     self.boundary_mask[i, 0] = b_types[3]
+
+
 
 
 
 
         self.init_grid(rho0)
+
+        for i in range(10):
+            for j in range(10):
+                for k in range(9):
+                    self.f1[i + n//2 - 5, j + n//2 - 5][k] += self.w[k] * 2.15
         print("Init done")
 
     # @ti.kernel
@@ -77,7 +85,7 @@ class LBM:
 
     @ti.func
     def translate_scale_rotate(self, i, j, di, dj, scale, theta):
-        x, y = (i - di) / scale, (j - dj) /scale
+        x, y = (i - di) / scale, (j - dj) / scale
 
         theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
         cos_theta = ti.cos(theta)
@@ -87,7 +95,7 @@ class LBM:
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
-        return weight * rho * (1 + 3 * cm + 4.5 * cm **2 - 1.5 * vel)
+        return weight * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * vel)
 
     @ti.kernel
     def init_grid(self, rho0: ti.types.f64):
@@ -97,8 +105,8 @@ class LBM:
             self.vel[i, j] = vel.norm()
             di, dj = self.translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 0.0)
 
-            if self.is_in_obstacle(di, dj):
-                self.boundary_mask[i, j] = 1
+            # if self.is_in_obstacle(di, dj):
+            #     self.boundary_mask[i, j] = 1
                 # self.f1[i, j].fill(0)
             # else:
             #     for k in ti.static(range(9)):
@@ -125,14 +133,14 @@ class LBM:
         # print(self.max_val[None], curr_max)
 
         for i, j in self.vel:
-            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.vel[i, j] / curr_max * (255), ti.i32)
             # norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
-                if self.boundary_mask[i, j]:
-                    self.rgb_image[i, j][c] = (255)
+                # if self.boundary_mask[i, j]:
+                #     self.rgb_image[i, j][c] = (255)
 
     @ti.func
     def distance(self, x1, y1, x2, y2):
@@ -208,7 +216,7 @@ class LBM:
         for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
             rho = self.f1[i, j].sum()
             # Calculates velocity vector in one step
-            vel = (self.dirs @ self.f1[i, j] / rho) if rho > 0 else tm.vec2([0, 0])
+            vel = self.dirs @ self.f1[i, j] / rho
             self.vel[i, j] = vel.norm()
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
@@ -228,12 +236,12 @@ class LBM:
     @ti.kernel
     def boundary_condition(self, step: ti.types.i16, step_max: ti.types.i16):
         # Streamt nog niet!!!!
-        for i, j in self.boundary_mask:
-            self.f1[i, j] += -self.f2[i, j] + self.inlet_val * self.boundary_mask[i, j] == 1 + self.reverse_vector(self.f2[i, j]) * self.boundary_mask[i, j] == 2
+        # for i, j in self.boundary_mask:
+        #     self.f1[i, j] += -self.f2[i, j] + self.inlet_val * self.boundary_mask[i, j] == 1 + self.reverse_vector(self.f2[i, j]) * self.boundary_mask[i, j] == 2
 
 
 
-        # CHECK VOOR BELANGRIJKE DEBUG.
+        # # CHECK VOOR BELANGRIJKE DEBUG.
         for i, j in self.f1:
             if self.boundary_mask[i, j]:
                 if i == 0 and step < step_max:
@@ -245,7 +253,8 @@ class LBM:
                 # Voormalig was self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j]). Dat kan niet kloppen.
                 rv = self.reverse_vector(self.f2[i, j])
                 for k in ti.static(range(9)):
-                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
+                    # self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
+                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j])
             else:
                 self.f1[i, j] = self.f2[i, j]
 
@@ -268,18 +277,20 @@ class LBM:
         # self.stream()
         step = 0
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+            self.max_vel()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()
             step += 1
+
             for _ in range(10):
-                self.max_vel()
+                # self.max_vel()
                 print(self.max_val[None])
                 self.collide_and_stream()
                 # self.stream()
-                # self.update()
+                self.update()
 
-                self.boundary_condition(step, 100)
+                # self.boundary_condition(step, 100)
                 # exit()
 
 
