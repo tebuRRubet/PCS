@@ -14,7 +14,7 @@ def precompute_colormap():
     import matplotlib.cm as cm
     viridis = cm.get_cmap('viridis', 256)
     # Extract RGB values
-    colors = np.roll(viridis(np.linspace(0, 1, 256))[:, :3], 3)
+    colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
 
 
@@ -41,7 +41,7 @@ class LBM:
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
-        # self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
+        self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
         self.inlet_val = inlet_val
 
         # block = 128
@@ -53,8 +53,8 @@ class LBM:
         self.a = 0.041
         self.b = 0.272
 
-        # for i in range(n):
-        #     self.boundary_mask[0, i] = b_types[0]
+        for i in range(n):
+            self.boundary_mask[0, i] = 1
 
         # for i in range(n):
         #     self.boundary_mask[i, n - 1] = b_types[1]
@@ -72,10 +72,10 @@ class LBM:
 
         self.init_grid(rho0)
 
-        for i in range(10):
-            for j in range(10):
-                for k in range(9):
-                    self.f1[i + n//2 - 5, j + n//2 - 5][k] += self.w[k] * 2.15
+        # for i in range(11):
+        #     for j in range(11):
+        #         for k in range(9):
+        #             self.f1[i + n//2 - 5, j + n//2 - 5][k] += self.w[k] * 0.15
         print("Init done")
 
     # @ti.kernel
@@ -97,8 +97,8 @@ class LBM:
             self.vel[i, j] = vel.norm()
             di, dj = translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 0.0)
 
-            # if is_in_obstacle(di, dj, self.obstacle, self.cylinder_r, self.a, self.b):
-            #     self.boundary_mask[i, j] = 1
+            if is_in_obstacle(di, dj, self.obstacle, self.cylinder_r, self.a, self.b):
+                self.boundary_mask[i, j] = 1
                 # self.f1[i, j].fill(0)
             # else:
             #     for k in ti.static(range(9)):
@@ -118,21 +118,21 @@ class LBM:
     def normalize_and_map(self):
         # print(self.total_density())
         for i, j in self.vel:
-            self.max_val[None] = ti.max(self.max_val[None], self.vel[i, j])
+            self.max_val[None] = ti.atomic_max(self.max_val[None], self.vel[i, j])
         curr_max = 1e-8
         for i, j in self.vel:
             curr_max = ti.max(curr_max, self.vel[i, j])
         # print(self.max_val[None], curr_max)
 
         for i, j in self.vel:
-            norm_val = ti.cast(self.vel[i, j] / curr_max * (255), ti.i32)
-            # norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
+            # norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
-                # if self.boundary_mask[i, j]:
-                #     self.rgb_image[i, j][c] = (255)
+                if self.boundary_mask[i, j]:
+                    self.rgb_image[i, j][c] = (255)
 
     @ti.kernel
     def stream(self):
@@ -174,7 +174,7 @@ class LBM:
         for i, j in self.f1:
             if self.boundary_mask[i, j]:
                 if i == 0 and step < step_max:
-                    self.f2[i, j][5] = 0.3
+                    self.f2[i, j][5] = 0.15
                 # if i == self.n - 1:
                     # self.vel[i, j] = 0
 
@@ -183,7 +183,7 @@ class LBM:
                 rv = self.reverse_vector(self.f2[i, j])
                 for k in ti.static(range(9)):
                     # self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
-                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j])
+                    self.f1[i + self.dirs[0, 8-k], j + self.dirs[1, 8-k]][8-k] = rv[k]
             else:
                 self.f1[i, j] = self.f2[i, j]
 
@@ -234,7 +234,7 @@ class LBM:
             gui.show()
             step += 1
 
-            for _ in range(10):
+            for _ in range(100):
                 # self.max_vel()
                 self.min_max_dens()
                 # print(self.max_val[None])
@@ -242,7 +242,7 @@ class LBM:
                 # self.stream()
                 self.update()
 
-                # self.boundary_condition(step, 100)
+                self.boundary_condition(step, 100)
                 # exit()
 
 
