@@ -4,11 +4,14 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 
 @ti.func
-def rotate(x, y, theta):
+def rotate(x, y, cx, cy, theta):
+    x2, y2 = glt(x, y, cx, cy, 1, 0, 0, 1)
     theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
     cos_theta = ti.cos(theta)
     sin_theta = ti.sin(theta)
-    return cos_theta * x - sin_theta * y, sin_theta * x + cos_theta * y
+    x3, y3 = cos_theta * x2 - sin_theta * y2, sin_theta * x2 + cos_theta * y2
+    x4, y4 = inverse_glt(x3, y3, cx, cy, 1, 0, 0, 1)
+    return x4, y4
 
 
 @ti.func
@@ -19,7 +22,13 @@ def distance(x1, y1, x2, y2):
 @ti.func
 def glt(x, y, horizontal_shift, vertical_shift, scale, new_x, new_y, new_r):
     return ((x - horizontal_shift) / scale) * new_r + new_x, \
-        ((y - vertical_shift) / scale) * new_r + new_y
+           ((y - vertical_shift) / scale) * new_r + new_y
+
+
+@ti.func
+def inverse_glt(x, y, horizontal_shift, vertical_shift, scale, new_x, new_y, new_r):
+    return ((x - new_x) / new_r) * scale + horizontal_shift, \
+           ((y - new_y) / new_r) * scale + vertical_shift
 
 
 @ti.func
