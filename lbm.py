@@ -11,7 +11,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 
 def precompute_colormap():
-    viridis = color_m.get_cmap('plasma', 256)
+    viridis = color_m.get_cmap('viridis', 256)
     # Extract RGB values
     colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
@@ -58,38 +58,38 @@ class LBM:
         self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
-        obstacle = CYLINDER
-        # scale = width // 8
-        # a = 0.026
-        # b = 0.077
-        # r = 0.918
-        scale = width//20
-        a = 0
-        b = 0
-        r = 1
+        obstacle = AIRFOIL
+        center_x = self.width // 2
+        center_y = self.height // 2
+        scale = width // 8
+        a = 0.026
+        b = 0.077
+        r = 0.918
+        # scale = width//20
+        # a = 0
+        # b = 0
+        # r = 1
         theta = 0
-        self.init_grid(rho0, obstacle, scale, a, b, r, theta)
-
+        self.init_grid(rho0, obstacle, center_x, center_y, scale, a, b, r, theta)
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
         return weight * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * vel)
 
     @ti.kernel
-    def init_grid(self, rho0: ti.types.f64, obstacle: ti.types.i8, scale: ti.types.i16, a: ti.types.f64, b: ti.types.f64, r: ti.types.f64, theta: ti.types.f64):
+    def init_grid(self, rho0: ti.types.f64, obstacle: ti.types.i8, center_x: ti.types.i16, center_y: ti.types.i16, scale: ti.types.i16, a: ti.types.f64, b: ti.types.f64, r: ti.types.f64, theta: ti.types.f64):
         for i, j in self.f1:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = rotate(i, j, self.width // 2, self.height // 2, theta)
+            di, dj = rotate(i, j, center_x, center_y, theta)
 
-            if is_in_obstacle(di, dj, obstacle, self.width // 2 - 200, self.height // 2, scale, a, b, r):
+            if is_in_obstacle(di, dj, obstacle, center_x, center_y, scale, a, b, r):
                 self.boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
                 self.f1[i, j][k] = self.feq(self.w[k], rho0, cm, tm.dot(vel, vel))
-
 
     @ti.kernel
     def normalize_and_map(self):
@@ -160,7 +160,7 @@ class LBM:
             gui.set_image(self.rgb_image)
             gui.show()
 
-            for _ in range(100):
+            for _ in range(10):
                 self.apply_inlet()
                 self.collide_and_stream()
                 self.boundary_condition()
