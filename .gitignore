@@ -170,3 +170,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 flow_simulation.gif
+lbm_simuation.gif
+lbm_frames

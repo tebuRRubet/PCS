@@ -1,3 +1,5 @@
+import os
+import subprocess
 import taichi as ti
 import taichi.math as tm
 import numpy as np
@@ -151,6 +153,13 @@ class LBM:
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.width - 2, self.height - 2))
+
+        # Create folder for saving frames
+        output_folder = "lbm_frames"
+        os.makedirs(output_folder, exist_ok=True)
+
+        frame_count = 0
+
         self.f2.copy_from(self.f1)
         self.apply_inlet()
         self.stream()
@@ -158,13 +167,20 @@ class LBM:
             self.max_vel()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
-            gui.show()
+
+            filename = os.path.join(output_folder, f"frame_{frame_count:04d}.png")
+            gui.show(filename)
+            frame_count += 1
+            print(frame_count)
 
             for _ in range(10):
                 self.apply_inlet()
                 self.collide_and_stream()
                 self.boundary_condition()
                 self.update()
+
+        print("Simulation ended. Generating GIF...")
+        subprocess.run(["python", "generate_gif.py"])
 
 
 L = LBM()
