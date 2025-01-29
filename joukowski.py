@@ -30,8 +30,8 @@ def plot_joukowski(center, radius, ax1, ax2):
 
 
 # Initial parameters
-initial_center = (0.041, 0.272)
-initial_radius = 1.0
+initial_center = (0.042, 0.272)
+initial_radius = 0.9
 
 # Create the figure and axes
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
@@ -43,18 +43,22 @@ plot_joukowski(initial_center, initial_radius, ax1, ax2)
 # Add sliders for interactive control
 ax_slider_x = plt.axes([0.2, 0.01, 0.65, 0.03], facecolor='lightgoldenrodyellow')
 ax_slider_y = plt.axes([0.2, 0.05, 0.65, 0.03], facecolor='lightgoldenrodyellow')
+ax_slider_r = plt.axes([0.2, 0.15, 0.65, 0.03], facecolor='lightgoldenrodyellow')
 
 slider_x = Slider(ax_slider_x, 'Center X', -2.0, 2.0, valinit=initial_center[0])
 slider_y = Slider(ax_slider_y, 'Center Y', -2.0, 2.0, valinit=initial_center[1])
+slider_r = Slider(ax_slider_r, 'r', -2.0, 2.0, valinit=initial_radius)
 
 
 def update(val):
     center = (slider_x.val, slider_y.val)
-    plot_joukowski(center, initial_radius, ax1, ax2)
+    plot_joukowski(center, slider_r.val, ax1, ax2)
     fig.canvas.draw_idle()
 
 
 slider_x.on_changed(update)
 slider_y.on_changed(update)
+slider_r.on_changed(update)
+
 
 plt.show()
