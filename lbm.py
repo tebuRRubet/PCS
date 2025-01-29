@@ -19,13 +19,16 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, width=1024, height=512, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128):
+    def __init__(self, width=1024, height=1024, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128, raycast_boundary=False, show_raycast=False):
         if width % block_size or height % block_size:
             print(f"Error, block_size ({block_size}) must be a divisor of n ({width}) and m ({height})!")
             print(f"{width} = {width // block_size} * {block_size} + {width % block_size}.")
             print(f"{height} = {height // block_size} * {block_size} + {height % block_size}.")
-
             exit()
+        if not isinstance(width, int) or not isinstance(height, int) or not isinstance(block_size, int):
+            print("Width, height and blocksize must be integers.")
+        if block_size == 1:
+            print("Block size of 1 is not allowed.")
         if width > 2000 or height > 2000:
             print("Warning, simulation grid and window are very large.")
         if inlet_val > 1 / tm.sqrt(3):
@@ -51,6 +54,10 @@ class LBM:
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
 
+        self.pre_boundary_mask = ti.field(ti.i8)
+        self.p_b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
+        self.p_b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.pre_boundary_mask)
+
         self.boundary_mask = ti.field(ti.i8)
         self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
@@ -60,8 +67,43 @@ class LBM:
         a = 0.026
         b = 0.077
         r = 0.918
-        theta = 5
+        theta = 15
         self.init_grid(rho0, obstacle, scale, a, b, r, theta)
+        if raycast_boundary:
+            self.raycast_mask()
+        else:
+            self.boundary_mask = self.pre_boundary_mask
+        if show_raycast:
+            self.pre_boundary_mask = self.boundary_mask
+
+    @ti.kernel
+    def raycast_mask(self):
+        self.mask_edge_raycast_top_bottom()
+        self.mask_edge_raycast_left_right()
+
+    @ti.func
+    def mask_edge_raycast_top_bottom(self):
+        for i in range(self.width):
+            marked1, marked2 = False, False
+            for j in range(self.height):
+                if not marked1 and self.pre_boundary_mask[i, j]:
+                    self.boundary_mask[i, j] = 1
+                    marked1 = True
+                if not marked2 and self.pre_boundary_mask[i, self.height - 1 - j]:
+                    self.boundary_mask[i, self.height - 1 - j] = 1
+                    marked2 = True
+
+    @ti.func
+    def mask_edge_raycast_left_right(self):
+        for i in range(self.height):
+            marked1, marked2 = False, False
+            for j in range(self.width):
+                if not marked1 and self.pre_boundary_mask[j, i]:
+                    self.boundary_mask[j, i] = 1
+                    marked1 = True
+                if not marked2 and self.pre_boundary_mask[self.width - 1 - j, i]:
+                    self.boundary_mask[self.width - 1 - j, i] = 1
+                    marked2 = True
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
@@ -76,7 +118,7 @@ class LBM:
             di, dj = rotate(i, j, self.width // 2, self.height // 2, theta)
 
             if is_in_obstacle(di, dj, obstacle, self.width // 2, self.height // 2, scale, a, b, r):
-                self.boundary_mask[i, j] = 1
+                self.pre_boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
@@ -85,16 +127,19 @@ class LBM:
 
     @ti.kernel
     def normalize_and_map(self):
-        # for i, j in self.vel:
-        #     self.max_val[None] = ti.atomic_max(self.max_val[None], self.vel[i, j])
         for i, j in self.rgb_image:
             norm_val = ti.cast(self.vel[i + 1, j + 1] / self.max_val[None] * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
-            for c in ti.ndrange(3):
+            for c in ti.static(range(3)):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
-                if self.boundary_mask[i, j]:
-                    self.rgb_image[i, j][c] = (255)
+        self.draw_boundary()
+
+    @ti.func
+    def draw_boundary(self):
+        for i, j in self.pre_boundary_mask:
+            for c in ti.static(range(3)):
+                self.rgb_image[i, j][c] = 255
 
     @ti.kernel
     def stream(self):
@@ -120,7 +165,7 @@ class LBM:
 
     @ti.kernel
     def boundary_condition(self):
-        for i, j in self.boundary_mask:
+        for i, j in self.pre_boundary_mask:
             for k in ti.static(range(9)):
                 self.f2[i + self.dirs[0, 8 - k], j + self.dirs[1, 8 - k]][8 - k] = self.f2[i, j][k]
 
@@ -150,7 +195,6 @@ class LBM:
             gui.show()
 
             for _ in range(10):
-                # self.max_vel()
                 self.apply_inlet()
                 self.collide_and_stream()
                 self.boundary_condition()
