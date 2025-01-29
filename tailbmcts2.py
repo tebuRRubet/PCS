@@ -2,7 +2,8 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 import matplotlib.cm as cm
-
+from obstacles import translate_scale_rotate, is_in_obstacle
+import matplotlib.pyplot as plt
 
 ti.init(arch=ti.gpu)
 
@@ -13,17 +14,20 @@ def precompute_colormap():
     import matplotlib.cm as cm
     viridis = cm.get_cmap('viridis', 256)
     # Extract RGB values
-    colors = np.roll(viridis(np.linspace(0, 1, 256))[:, :3], 3)
+    colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
 
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, tau=0.55, rho0=1.0):
+    def __init__(self, n=1024, tau=0.55, rho0=1.0, inlet_val=0.15, angle=0):
+        self.angle = angle
+
         self.rho0 = rho0
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
                                (-1, -1), (0, -1), (1, -1)]).transpose()
+        print(self.dirs)
         self.n = n
         self.disp = ti.field(dtype=ti.f32, shape=(n, n))
         self.f1 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
@@ -39,49 +43,42 @@ class LBM:
         self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n, n))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
-        self.boundary = ti.field(dtype=ti.i8, shape=(n, n))
+        self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
+        self.inlet_val = inlet_val
+
+        # block = 128
+        # self.boundary_mask = ti.field(ti.i8)
+        # self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block, n//block))
+        # self.b_sparse_mask.bitmasked(ti.ij, (block, block)).place(self.boundary_mask)
         self.obstacle = AIRFOIL
         self.cylinder_r = n // 20
         self.a = 0.041
         self.b = 0.272
 
+        for i in range(n):
+            self.boundary_mask[0, i] = 1
         self.drag = ti.field(dtype=ti.f32, shape=())
         self.lift = ti.field(dtype=ti.f32, shape=())
+        # for i in range(n):
+        #     self.boundary_mask[i, n - 1] = b_types[1]
 
-        # for i in (0, self.n - 1):
-        # for i in (0, 1):
-        #     for j in range(self.n):
-        #         self.boundary[i, j] = 1
-        #         self.f1[i, j].fill(0)
+        # for i in range(n):
+        #     self.boundary_mask[n - 1, i] = b_types[2]
 
-        # for j in (0, self.n - 1):
-        #     for i in range(self.n):
-        #         self.boundary[i, j] = 1
-        #         self.f1[i, j].fill(0)
+        # for i in range(n):
+        #     self.boundary_mask[i, 0] = b_types[3]
 
-        # for i in range(-50, 51):
-        #     for j in range(-50, 51):
-        #         if i ** 2 + j ** 2 < 50 ** 2:
-        #             self.boundary[i + 450, j+ 450] = 1
-        #             self.f1[i, j].fill(0)
 
-        # for i in range(-10, 11):
-        #     for j in range(-10, 11):
-        #         if i**2 + j ** 2 < 200:
-        #             for k in range(9):
-        #                 self.grid[n//2 + j, n//2 + i][k] += 5 * w[k]
 
-        # for i in range(-10, 11):
-        #     for j in range(20):
-        #         if i**2 + j ** 2 < 200:
-        #             self.grid[n//2 + j, n//2 + i + 200][1] += 1
+
+
 
         self.init_grid(rho0)
-        # for i in range(-10, 11):
-        #     for j in range(-10, 11):
-        #         if i**2 + j ** 2 < 200:
-        #             for k in range(1):
-        #                 self.f1[-100 + n // 2 + j, n // 2 + i][5] += self.w[k]
+
+        # for i in range(11):
+        #     for j in range(11):
+        #         for k in range(9):
+        #             self.f1[i + n//2 - 5, j + n//2 - 5][k] += self.w[k] * 0.15
         print("Init done")
 
     # @ti.kernel
@@ -90,17 +87,10 @@ class LBM:
     #         for k in ti.static(range(9)):
     #             self.f1[i, j][k] = self.w[k]
 
-    @ti.func
-    def translate_scale(self, i, j, di, dj, scale, theta):
-        x, y = (i - di) / scale, (j - dj) /scale
-        theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
-        cos_theta = ti.cos(theta)
-        sin_theta = ti.sin(theta)
-        return cos_theta * x - sin_theta * y, sin_theta * x + cos_theta * y
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
-        return weight * rho * (1 + 3 * cm + 4.5 * cm **2 - 1.5 * vel)
+        return weight * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * vel)
 
     @ti.kernel
     def init_grid(self, rho0: ti.types.f64):
@@ -108,9 +98,10 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = self.translate_scale(i, j, self.n//2, self.n//2, 4, 45.0)
-            if self.is_in_obstacle(di, dj):
-                self.boundary[i, j] = 1
+            di, dj = translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 1.0 * self.angle)
+
+            if is_in_obstacle(di, dj, self.obstacle, self.cylinder_r, self.a, self.b):
+                self.boundary_mask[i, j] = 1
                 # self.f1[i, j].fill(0)
             # else:
             #     for k in ti.static(range(9)):
@@ -130,84 +121,21 @@ class LBM:
     def normalize_and_map(self):
         # print(self.total_density())
         for i, j in self.vel:
-            self.max_val[None] = ti.max(self.max_val[None], self.vel[i, j])
+            self.max_val[None] = ti.atomic_max(self.max_val[None], self.vel[i, j])
         curr_max = 1e-8
         for i, j in self.vel:
             curr_max = ti.max(curr_max, self.vel[i, j])
         # print(self.max_val[None], curr_max)
 
         for i, j in self.vel:
+            # norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
             norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
-            # norm_val = ti.cast(self.u[i, j] / curr_max * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.ndrange(3):
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
-                if self.boundary[i, j]:
+                if self.boundary_mask[i, j]:
                     self.rgb_image[i, j][c] = (255)
-
-    @ti.func
-    def distance(self, x1, y1, x2, y2):
-        return ti.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-
-    @ti.func
-    def glt(self, x, y):
-        return (x / self.cylinder_r) + self.a, \
-            (y / self.cylinder_r) + self.b
-
-    @ti.func
-    def inverse_glt(self, x, y):
-        return self.cylinder_r * (x - self.a), self.cylinder_r * (y - self.b)
-
-    @ti.func
-    def joukowski_transform(self, x, y):
-        r = x**2 + y**2
-        return x * (1 + 1 / r), y * (1 - 1 / r)
-
-    @ti.func
-    def inverse_joukowski_transform(self, alpha, beta):
-        u = alpha**2 - beta**2 - 4
-        v = 2 * alpha * beta
-        r = ti.sqrt(u**2 + v**2)
-        theta = ti.atan2(v, u)
-
-        x1 = (alpha + ti.sqrt(r) * ti.cos(theta / 2)) / 2
-        y1 = (beta + ti.sqrt(r) * ti.sin(theta / 2)) / 2
-        x2 = (alpha - ti.sqrt(r) * ti.cos(theta / 2)) / 2
-        y2 = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
-        return x1, y1, x2, y2
-
-    @ti.func
-    def is_in_cylinder(self, x, y):
-        return ti.cast(self.distance(x, y, 0, 0) <= self.cylinder_r, ti.i32)
-
-    @ti.func
-    def is_in_egg(self, x, y):
-        x_shifted, y_shifted = x, y
-        r_squared = x_shifted**2 + y_shifted**2
-        discriminant = ti.sqrt(ti.abs(r_squared - 4.0))
-        zeta_x = (x_shifted - discriminant) * 0.5
-        zeta_y = (y_shifted - discriminant) * 0.5
-        return ti.cast(zeta_x**2 + zeta_y**2 <= self.cylinder_r**2, ti.i32)
-
-    @ti.func
-    def is_in_airfoil(self, alpha, beta):
-        alpha2, beta2 = self.glt(alpha, beta)
-        x1, y1, x2, y2 = self.inverse_joukowski_transform(alpha2, beta2)
-        check1 = self.distance(x1, y1, self.a, self.b) <= 1
-        check2 = self.distance(x2, y2, self.a, self.b) <= 1
-        return ti.cast(not (check1 or check2), ti.i32)
-
-    @ti.func
-    def is_in_obstacle(self, x, y):
-        result = 0
-        if self.obstacle == CYLINDER:
-            result = self.is_in_cylinder(x, y)
-        elif self.obstacle == EGG:
-            result = self.is_in_egg(x, y)
-        elif self.obstacle == AIRFOIL:
-            result = self.is_in_airfoil(x, y)
-        return result
 
     @ti.kernel
     def stream(self):
@@ -219,10 +147,8 @@ class LBM:
     def collide_and_stream(self):
         for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
             rho = self.f1[i, j].sum()
-            # if i == 20 and j == 30:
-            #     print(rho)
             # Calculates velocity vector in one step
-            vel = (self.dirs @ self.f1[i, j] / rho) if rho > 0 else tm.vec2([0, 0])
+            vel = self.dirs @ self.f1[i, j] / rho
             self.vel[i, j] = vel.norm()
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
@@ -240,31 +166,29 @@ class LBM:
         return ti.Vector([x[8 - i] for i in ti.static(range(9))])
 
     @ti.kernel
-    def bounce_boundary(self, step: ti.types.i16, step_max: ti.types.i16):
+    def boundary_condition(self, step: ti.types.i16, step_max: ti.types.i16):
+        # Streamt nog niet!!!!
+        # for i, j in self.boundary_mask:
+        #     self.f1[i, j] += -self.f2[i, j] + self.inlet_val * self.boundary_mask[i, j] == 1 + self.reverse_vector(self.f2[i, j]) * self.boundary_mask[i, j] == 2
+
         self.drag[None] = 0.0
         self.lift[None] = 0.0
+        # # CHECK VOOR BELANGRIJKE DEBUG.
         for i, j in self.f1:
-            if self.boundary[i, j]:
+            if self.boundary_mask[i, j]:
                 if i == 0 and step < step_max:
-                    # self.grid[i, j].fill(0)
-                    vel = (self.dirs @ self.f1[i, j] / self.rho0) if ti.static(self.rho0 > 0) else tm.vec2([0, 0])
-                    cm = vel[0] * self.dirs[0, 5]
-                    self.f2[i, j][5] = self.feq(self.w[5], self.rho0, cm, tm.dot(vel, vel))
-                    self.f2[i, j][5] = 0.3
-                # elif i == 0:
-                #     self.f2[i, j][5] = -0.15
-                if i == self.n - 1:
-                    # self.update_grid[i, j] = ti.Vector([0] * 9)
-                    self.vel[i, j] = 0
-                reverse = self.reverse_vector(self.f2[i, j])
+                    self.f2[i, j][3] = 0.15
+                # if i == self.n - 1:
+                    # self.vel[i, j] = 0
+
+
+                # Voormalig was self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j]). Dat kan niet kloppen.
+                rv = self.reverse_vector(self.f2[i, j])
                 for k in ti.static(range(9)):
-                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = reverse
-                    self.drag[None] += 2 * reverse[k] * self.dirs[0, k]
-                    self.lift[None] += 2 * reverse[k] * self.dirs[1, k]
-                    
-                # self.gird[i, j].fill(0)
-                # self.grid[i, j] = self.reverse_vector(self.update_grid[i, j])
-                # self.u[i, j] = tm.vec2([0, 0])
+                    # self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
+                    self.f1[i + self.dirs[0, 8-k], j + self.dirs[1, 8-k]][8-k] = self.f2[i, j][k]
+                    self.drag[None] += 2 * rv[k] * self.dirs[0, k]
+                    self.lift[None] += 2 * rv[k] * self.dirs[1, k]
             else:
                 self.f1[i, j] = self.f2[i, j]
 
@@ -275,42 +199,76 @@ class LBM:
         for i, j in self.f2:
             self.f1[i, j] = self.f2[i, j]
 
-
-    @ti.kernel
-    def stream_basic(self):
-        for i, j in self.f1:
-            for k in ti.static(range(9)):
-                ni, nj = i + self.dirs[k, 0], j + self.dirs[k, 1]
-                if 0 <= ni < self.n and 0 <= nj < self.n:
-                    self.f2[ni, nj][k] = self.f1[i, j][k]
-
     @ti.kernel
     def max_vel(self):
         for i, j in self.vel:
             ti.atomic_max(self.max_val[None], self.vel[i, j])
 
+    @ti.kernel
+    def min_max_dens(self):
+        mini = 2.0
+        maxi = 0.0
+        for i, j in self.f1:
+            ti.atomic_min(mini, self.f1[i, j].sum())
+            ti.atomic_max(maxi, self.f1[i, j].sum())
+            if i == self.n // 2 and j > self.n // 2 and self.f1[i, j].sum() < 1e-2:
+                print("NUL DENSITYY!Y!Y!Y!Y!YY!Y!")
+                print(i, j)
+                print(self.f1[i,j])
+                print()
+        # print(mini, maxi)
+
+    @ti.kernel
+    def get_disp(self):
+        for i, j in self.f1:
+            # self.rgb_image[i, j][0] = self.f1[i, j].sum() * 255 / 2
+            self.rgb_image[i, j][1] = self.vel[i, j] * 255
+
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
         self.f2.copy_from(self.f1)
-        # self.stream()
+        self.stream()
         step = 0
+        drags = []
+        lifts = []
+
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+            self.max_vel()
+            # self.get_disp()
+            # gui.set_image(self.rgb_image)
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()
             step += 1
-            for _ in range(10):
-                self.max_vel()
+
+            for _ in range(100):
+                # self.max_vel()
+                self.min_max_dens()
                 # print(self.max_val[None])
                 self.collide_and_stream()
                 # self.stream()
-                # self.update()
+                self.update()
 
-                self.bounce_boundary(step, 100)
-                print("drag:", self.drag[None], "lift:", self.lift[None])
+                self.boundary_condition(0, 100)
+                
+                drags.append(self.drag[None])
+                lifts.append(self.lift[None])
+            # print("drag:", self.drag[None], "lift:", self.lift[None], step)
                 # exit()
+            if step == 100:
+                break
+        # plt.plot(drags)
+        # plt.plot(lifts)
+        mean_drag = np.mean(drags[int(len(drags) / 10):])
+        mean_lift = np.mean(lifts[int(len(lifts) / 10):])
+        return f"mean drag: {mean_drag}, mean lift: {mean_lift}, ratio: {mean_drag / mean_lift}, angle: {self.angle}"
+        # plt.show()
 
+txt= []
+for i in range(1):
+    L = LBM(angle=i+90)
+    txt.append(L.display())
 
-L = LBM()
-L.display()
+for t in txt:
+    print(t)
