@@ -46,8 +46,8 @@ def inverse_joukowski_transform(alpha, beta):
 
 
 @ti.func
-def is_in_cylinder(x, y, scale):
-    return ti.cast(distance(x, y, 0, 0) <= scale, ti.i32)
+def is_in_cylinder(x, y, horizontal_shift, vertical_shift,  scale):
+    return ti.cast(distance(x, y , horizontal_shift, vertical_shift) <= scale, ti.i32)
 
 
 @ti.func
@@ -73,7 +73,7 @@ def is_in_airfoil(alpha, beta, horizontal_shift, vertical_shift, scale, new_x, n
 def is_in_obstacle(x, y, obstacle, horizontal_shift, vertical_shift, scale, new_x, new_y, new_r):
     result = 0
     if obstacle == CYLINDER:
-        result = is_in_cylinder(x, y, scale)
+        result = is_in_cylinder(x, y, horizontal_shift, vertical_shift, scale)
     elif obstacle == EGG:
         result = is_in_egg(x, y, scale)
     elif obstacle == AIRFOIL:
