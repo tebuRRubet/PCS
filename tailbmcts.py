@@ -30,7 +30,7 @@ class LBM:
         self.disp = ti.field(dtype=ti.f32, shape=(n, n))
         self.f1 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
         self.f2 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
-        self.tau_inv = 1 / 3
+        self.tau_inv = 1 / tau
         self.vel = ti.field(dtype=ti.f32, shape=(n, n))
         self.w = ti.field(dtype=ti.f32, shape=(9,))
         self.w.from_numpy(np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36)
@@ -199,13 +199,36 @@ class LBM:
         for i, j in self.vel:
             ti.atomic_max(self.max_val[None], self.vel[i, j])
 
+    @ti.kernel
+    def min_max_dens(self):
+        mini = 2.0
+        maxi = 0.0
+        for i, j in self.f1:
+            ti.atomic_min(mini, self.f1[i, j].sum())
+            ti.atomic_max(maxi, self.f1[i, j].sum())
+            if i == self.n // 2 and j > self.n // 2 and self.f1[i, j].sum() < 1e-2:
+                print("NUL DENSITYY!Y!Y!Y!Y!YY!Y!")
+                print(i, j)
+                print(self.f1[i,j])
+                print()
+        print(mini, maxi)
+
+    @ti.kernel
+    def get_disp(self):
+        for i, j in self.f1:
+            # self.rgb_image[i, j][0] = self.f1[i, j].sum() * 255 / 2
+            self.rgb_image[i, j][1] = self.vel[i, j] * 255
+
+
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
         self.f2.copy_from(self.f1)
-        # self.stream()
+        self.stream()
         step = 0
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
             self.max_vel()
+            # self.get_disp()
+            # gui.set_image(self.rgb_image)
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
             gui.show()
@@ -213,7 +236,8 @@ class LBM:
 
             for _ in range(10):
                 # self.max_vel()
-                print(self.max_val[None])
+                self.min_max_dens()
+                # print(self.max_val[None])
                 self.collide_and_stream()
                 # self.stream()
                 self.update()
