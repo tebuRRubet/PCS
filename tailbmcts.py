@@ -2,6 +2,7 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 import matplotlib.cm as cm
+from obstacles import translate_scale_rotate, is_in_obstacle
 
 
 ti.init(arch=ti.gpu)
@@ -83,15 +84,6 @@ class LBM:
     #         for k in ti.static(range(9)):
     #             self.f1[i, j][k] = self.w[k]
 
-    @ti.func
-    def translate_scale_rotate(self, i, j, di, dj, scale, theta):
-        x, y = (i - di) / scale, (j - dj) / scale
-
-        theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
-        cos_theta = ti.cos(theta)
-        sin_theta = ti.sin(theta)
-        return cos_theta * x - sin_theta * y, sin_theta * x + cos_theta * y
-
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
@@ -103,9 +95,9 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = self.translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 0.0)
+            di, dj = translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 0.0)
 
-            # if self.is_in_obstacle(di, dj):
+            # if is_in_obstacle(di, dj, self.obstacle, self.cylinder_r, self.a, self.b):
             #     self.boundary_mask[i, j] = 1
                 # self.f1[i, j].fill(0)
             # else:
@@ -141,69 +133,6 @@ class LBM:
                 self.rgb_image[i, j][c] = ti.u8(self.colormap[norm_val][c] * (255))
                 # if self.boundary_mask[i, j]:
                 #     self.rgb_image[i, j][c] = (255)
-
-    @ti.func
-    def distance(self, x1, y1, x2, y2):
-        return ti.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-
-    @ti.func
-    def glt(self, x, y):
-        return (x / self.cylinder_r) + self.a, \
-            (y / self.cylinder_r) + self.b
-
-    @ti.func
-    def inverse_glt(self, x, y):
-        return self.cylinder_r * (x - self.a), self.cylinder_r * (y - self.b)
-
-    @ti.func
-    def joukowski_transform(self, x, y):
-        r = x**2 + y**2
-        return x * (1 + 1 / r), y * (1 - 1 / r)
-
-    @ti.func
-    def inverse_joukowski_transform(self, alpha, beta):
-        u = alpha**2 - beta**2 - 4
-        v = 2 * alpha * beta
-        r = ti.sqrt(u**2 + v**2)
-        theta = ti.atan2(v, u)
-
-        x1 = (alpha + ti.sqrt(r) * ti.cos(theta / 2)) / 2
-        y1 = (beta + ti.sqrt(r) * ti.sin(theta / 2)) / 2
-        x2 = (alpha - ti.sqrt(r) * ti.cos(theta / 2)) / 2
-        y2 = (beta - ti.sqrt(r) * ti.sin(theta / 2)) / 2
-        return x1, y1, x2, y2
-
-    @ti.func
-    def is_in_cylinder(self, x, y):
-        return ti.cast(self.distance(x, y, 0, 0) <= self.cylinder_r, ti.i32)
-
-    @ti.func
-    def is_in_egg(self, x, y):
-        x_shifted, y_shifted = x, y
-        r_squared = x_shifted**2 + y_shifted**2
-        discriminant = ti.sqrt(ti.abs(r_squared - 4.0))
-        zeta_x = (x_shifted - discriminant) * 0.5
-        zeta_y = (y_shifted - discriminant) * 0.5
-        return ti.cast(zeta_x**2 + zeta_y**2 <= self.cylinder_r**2, ti.i32)
-
-    @ti.func
-    def is_in_airfoil(self, alpha, beta):
-        alpha2, beta2 = self.glt(alpha, beta)
-        x1, y1, x2, y2 = self.inverse_joukowski_transform(alpha2, beta2)
-        check1 = self.distance(x1, y1, self.a, self.b) <= 1
-        check2 = self.distance(x2, y2, self.a, self.b) <= 1
-        return ti.cast(not (check1 or check2), ti.i32)
-
-    @ti.func
-    def is_in_obstacle(self, x, y):
-        result = 0
-        if self.obstacle == CYLINDER:
-            result = self.is_in_cylinder(x, y)
-        elif self.obstacle == EGG:
-            result = self.is_in_egg(x, y)
-        elif self.obstacle == AIRFOIL:
-            result = self.is_in_airfoil(x, y)
-        return result
 
     @ti.kernel
     def stream(self):
@@ -269,7 +198,6 @@ class LBM:
     def max_vel(self):
         for i, j in self.vel:
             ti.atomic_max(self.max_val[None], self.vel[i, j])
-
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.n, self.n))
