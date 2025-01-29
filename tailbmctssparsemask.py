@@ -49,33 +49,31 @@ class LBM:
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
 
-        block = 128
         self.boundary_mask = ti.field(ti.i8)
-        self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block, n//block))
-        self.b_sparse_mask.bitmasked(ti.ij, (block, block)).place(self.boundary_mask)
-        self.obstacle = AIRFOIL
-        self.horizontal_shift = n // 2
-        self.vecrtical_shift = n // 2
-        self.scale = n // 8
-        self.new_x = 0.026
-        self.new_y = 0.077
-        self.new_r = 0.918
-        self.theta = 5.0
-        self.init_grid(rho0)
+        self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block_size, n//block_size))
+        self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
+
+        obstacle = AIRFOIL
+        scale = n // 8
+        a = 0.026
+        b = 0.077
+        r = 0.918
+        theta = 90
+        self.init_grid(rho0, obstacle, scale, a, b, r, theta)
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
         return weight * rho * (1 + 3 * cm + 4.5 * cm ** 2 - 1.5 * vel)
 
     @ti.kernel
-    def init_grid(self, rho0: ti.types.f64):
+    def init_grid(self, rho0: ti.types.f64, obstacle: ti.types.i8, scale: ti.types.i16, a: ti.types.f64, b: ti.types.f64, r: ti.types.f64, theta: ti.types.f64):
         for i, j in self.f1:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = rotate(i, j, self.theta)
+            di, dj = rotate(i, j, self.n//2, self.n//2, theta)
 
-            if is_in_obstacle(di, dj, self.obstacle, self.horizontal_shift, self.vecrtical_shift, self.scale, self.new_x, self.new_y, self.new_r):
+            if is_in_obstacle(di, dj, obstacle, self.n//2, self.n//2, scale, a, b, r):
                 self.boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
