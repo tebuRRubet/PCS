@@ -50,7 +50,7 @@ class LBM:
         self.inlet_val = inlet_val
 
         self.boundary_mask = ti.field(ti.i8)
-        self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block_size, n//block_size))
+        self.b_sparse_mask = ti.root.pointer(ti.ij, (n // block_size, n // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
         obstacle = AIRFOIL
@@ -71,9 +71,9 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = rotate(i, j, self.n//2, self.n//2, theta)
+            di, dj = rotate(i, j, self.n // 2, self.n // 2, theta)
 
-            if is_in_obstacle(di, dj, obstacle, self.n//2, self.n//2, scale, a, b, r):
+            if is_in_obstacle(di, dj, obstacle, self.n // 2, self.n // 2, scale, a, b, r):
                 self.boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
@@ -120,7 +120,7 @@ class LBM:
     def boundary_condition(self):
         for i, j in self.boundary_mask:
             for k in ti.static(range(9)):
-                self.f2[i + self.dirs[0, 8-k], j + self.dirs[1, 8-k]][8-k] = self.f2[i, j][k]
+                self.f2[i + self.dirs[0, 8 - k], j + self.dirs[1, 8 - k]][8 - k] = self.f2[i, j][k]
 
     """Check performance"""
     @ti.kernel
