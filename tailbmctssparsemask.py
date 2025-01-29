@@ -1,8 +1,8 @@
 import taichi as ti
 import taichi.math as tm
 import numpy as np
-import matplotlib.cm as cm
-from obstacles import translate_scale_rotate, is_in_obstacle
+import matplotlib.cm as color_m
+from obstacles import rotate, is_in_obstacle
 
 
 ti.init(arch=ti.gpu)
@@ -11,8 +11,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 
 def precompute_colormap():
-    import matplotlib.cm as cm
-    viridis = cm.get_cmap('viridis', 256)
+    viridis = color_m.get_cmap('viridis', 256)
     # Extract RGB values
     colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
@@ -20,7 +19,15 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=512, tau=0.55, rho0=1.0, inlet_val=0.15):
+    def __init__(self, n=512, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128):
+        if n % block_size:
+            print(f"Error, block_size ({block_size}) must be a divisor of n ({n})!")
+            print(f"{n} = {n // block_size} * {block_size} + {n % block_size}")
+            exit()
+        if n > 2000:
+            print("Warning, simulation grid and window are very large.")
+        if inlet_val > 1 / tm.sqrt(3):
+            print("Warning, inlet velocity higher than system's speed of sound. This may cause instabilty.")
         self.rho0 = rho0
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
@@ -47,9 +54,13 @@ class LBM:
         self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block, n//block))
         self.b_sparse_mask.bitmasked(ti.ij, (block, block)).place(self.boundary_mask)
         self.obstacle = AIRFOIL
-        self.cylinder_r = n // 20
-        self.a = 0.041
-        self.b = 0.272
+        self.horizontal_shift = n // 2
+        self.vecrtical_shift = n // 2
+        self.scale = n // 8
+        self.new_x = 0.026
+        self.new_y = 0.077
+        self.new_r = 0.918
+        self.theta = 5.0
         self.init_grid(rho0)
 
     @ti.func
@@ -62,19 +73,15 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 5.0)
+            di, dj = rotate(i, j, self.theta)
 
-            if is_in_obstacle(di, dj, self.obstacle, self.cylinder_r, self.a, self.b):
+            if is_in_obstacle(di, dj, self.obstacle, self.horizontal_shift, self.vecrtical_shift, self.scale, self.new_x, self.new_y, self.new_r):
                 self.boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
                 self.f1[i, j][k] = self.feq(self.w[k], rho0, cm, tm.dot(vel, vel))
 
-    def apply_colormap(self, data):
-        norm_data = (data - data.min()) / (data.max() - data.min() + 1e-8)
-        colormap = cm.viridis(norm_data)
-        return (colormap[:, :, :3] * 255).astype(np.uint8)
 
     @ti.kernel
     def normalize_and_map(self):
@@ -109,7 +116,7 @@ class LBM:
     @ti.kernel
     def apply_inlet(self):
         for i in ti.ndrange(self.n):
-            self.f1[1, i][5] = 0.15
+            self.f1[1, i][5] = self.inlet_val
 
     @ti.kernel
     def boundary_condition(self):
@@ -140,7 +147,7 @@ class LBM:
             gui.set_image(self.rgb_image)
             gui.show()
 
-            for _ in range(100):
+            for _ in range(10):
                 self.max_vel()
                 self.apply_inlet()
                 self.collide_and_stream()
