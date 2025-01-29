@@ -19,7 +19,7 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=1000, tau=0.55, rho0=1.0, b_types=(2, 1, 2, 1), b_values=(0.15, 0, 0, 0)):
+    def __init__(self, n=1024, tau=0.55, rho0=1.0, b_types=(2, 1, 2, 1), inlet_val=0.15):
         self.rho0 = rho0
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
@@ -40,7 +40,12 @@ class LBM:
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.boundary_mask = ti.field(dtype=ti.i8, shape=(n, n))
-        self.boundary_vals = ti.field(dtype=ti.int8, shape=(4,)).from_numpy(np.array(b_values))
+        self.inlet_val = inlet_val
+
+        # block = 128
+        # self.boundary_mask = ti.field(ti.i8)
+        # self.b_sparse_mask = ti.root.pointer(ti.ij, (n//block, n//block))
+        # self.b_sparse_mask.bitmasked(ti.ij, (block, block)).place(self.boundary_mask)
         self.obstacle = AIRFOIL
         self.cylinder_r = n // 20
         self.a = 0.041
@@ -59,29 +64,9 @@ class LBM:
             self.boundary_mask[i, 0] = b_types[3]
 
 
-        # for i in range(-50, 51):
-        #     for j in range(-50, 51):
-        #         if i ** 2 + j ** 2 < 50 ** 2:
-        #             self.boundary[i + 450, j+ 450] = 1
-        #             self.f1[i, j].fill(0)
 
-        # for i in range(-10, 11):
-        #     for j in range(-10, 11):
-        #         if i**2 + j ** 2 < 200:
-        #             for k in range(9):
-        #                 self.grid[n//2 + j, n//2 + i][k] += 5 * w[k]
-
-        # for i in range(-10, 11):
-        #     for j in range(20):
-        #         if i**2 + j ** 2 < 200:
-        #             self.grid[n//2 + j, n//2 + i + 200][1] += 1
 
         self.init_grid(rho0)
-        # for i in range(-10, 11):
-        #     for j in range(-10, 11):
-        #         if i**2 + j ** 2 < 200:
-        #             for k in range(1):
-        #                 self.f1[-100 + n // 2 + j, n // 2 + i][5] += self.w[k]
         print("Init done")
 
     # @ti.kernel
@@ -91,7 +76,7 @@ class LBM:
     #             self.f1[i, j][k] = self.w[k]
 
     @ti.func
-    def translate_scale(self, i, j, di, dj, scale, theta):
+    def translate_scale_rotate(self, i, j, di, dj, scale, theta):
         x, y = (i - di) / scale, (j - dj) /scale
 
         theta = ti.cast(theta * ti.math.pi / 180.0, ti.f32)
@@ -110,7 +95,7 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = self.translate_scale(i, j, self.n//2, self.n//2, 4, 0.0)
+            di, dj = self.translate_scale_rotate(i, j, self.n//2, self.n//2, 4, 0.0)
 
             if self.is_in_obstacle(di, dj):
                 self.boundary_mask[i, j] = 1
@@ -222,8 +207,6 @@ class LBM:
     def collide_and_stream(self):
         for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
             rho = self.f1[i, j].sum()
-            # if i == 20 and j == 30:
-            #     print(rho)
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho) if rho > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
@@ -243,15 +226,26 @@ class LBM:
         return ti.Vector([x[8 - i] for i in ti.static(range(9))])
 
     @ti.kernel
-    def bounce_boundary(self, step: ti.types.i16, step_max: ti.types.i16):
+    def boundary_condition(self, step: ti.types.i16, step_max: ti.types.i16):
+        # Streamt nog niet!!!!
+        for i, j in self.boundary_mask:
+            self.f1[i, j] += -self.f2[i, j] + self.inlet_val * self.boundary_mask[i, j] == 1 + self.reverse_vector(self.f2[i, j]) * self.boundary_mask[i, j] == 2
+
+
+
+        # CHECK VOOR BELANGRIJKE DEBUG.
         for i, j in self.f1:
             if self.boundary_mask[i, j]:
                 if i == 0 and step < step_max:
                     self.f2[i, j][5] = 0.3
                 # if i == self.n - 1:
                     # self.vel[i, j] = 0
+
+
+                # Voormalig was self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j]). Dat kan niet kloppen.
+                rv = self.reverse_vector(self.f2[i, j])
                 for k in ti.static(range(9)):
-                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]] = self.reverse_vector(self.f2[i, j])
+                    self.f1[i + self.dirs[0, k], j + self.dirs[1, k]][8-k] = self.f2[i,j][k]
             else:
                 self.f1[i, j] = self.f2[i, j]
 
@@ -285,7 +279,7 @@ class LBM:
                 # self.stream()
                 # self.update()
 
-                self.bounce_boundary(step, 100)
+                self.boundary_condition(step, 100)
                 # exit()
 
 
