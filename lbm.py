@@ -19,12 +19,14 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, n=512, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128):
-        if n % block_size:
-            print(f"Error, block_size ({block_size}) must be a divisor of n ({n})!")
-            print(f"{n} = {n // block_size} * {block_size} + {n % block_size}")
+    def __init__(self, width=1024, height=512, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128):
+        if width % block_size or height % block_size:
+            print(f"Error, block_size ({block_size}) must be a divisor of n ({width}) and m ({height})!")
+            print(f"{width} = {width // block_size} * {block_size} + {width % block_size}.")
+            print(f"{height} = {height // block_size} * {block_size} + {height % block_size}.")
+
             exit()
-        if n > 2000:
+        if width > 2000 or height > 2000:
             print("Warning, simulation grid and window are very large.")
         if inlet_val > 1 / tm.sqrt(3):
             print("Warning, inlet velocity higher than system's speed of sound. This may cause instabilty.")
@@ -32,29 +34,29 @@ class LBM:
         self.dirs = ti.Matrix([(-1, 1), (0, 1), (1, 1),
                                (-1, 0), (0, 0), (1, 0),
                                (-1, -1), (0, -1), (1, -1)]).transpose()
-        self.n = n
-        self.disp = ti.field(dtype=ti.f32, shape=(n, n))
-        self.f1 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
-        self.f2 = ti.Vector.field(n=9, dtype=ti.f32, shape=(n, n))
+        self.height, self.width = height, width
+        self.disp = ti.field(dtype=ti.f32, shape=(width, height))
+        self.f1 = ti.Vector.field(n=9, dtype=ti.f32, shape=(width, height))
+        self.f2 = ti.Vector.field(n=9, dtype=ti.f32, shape=(width, height))
         self.tau_inv = 1 / tau
-        self.vel = ti.field(dtype=ti.f32, shape=(n, n))
+        self.vel = ti.field(dtype=ti.f32, shape=(width, height))
         self.w = ti.field(dtype=ti.f32, shape=(9,))
         self.w.from_numpy(np.array([1, 4, 1, 4, 16, 4, 1, 4, 1]) / 36)
 
         self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
-        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(n-2, n-2))
+        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(width-2, height-2))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
 
         self.boundary_mask = ti.field(ti.i8)
-        self.b_sparse_mask = ti.root.pointer(ti.ij, (n // block_size, n // block_size))
+        self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
         obstacle = AIRFOIL
-        scale = n // 8
+        scale = width // 8
         a = 0.026
         b = 0.077
         r = 0.918
@@ -71,9 +73,9 @@ class LBM:
             # Calculates velocity vector in one step
             vel = (self.dirs @ self.f1[i, j] / rho0) if rho0 > 0 else tm.vec2([0, 0])
             self.vel[i, j] = vel.norm()
-            di, dj = rotate(i, j, self.n // 2, self.n // 2, theta)
+            di, dj = rotate(i, j, self.width // 2, self.height // 2, theta)
 
-            if is_in_obstacle(di, dj, obstacle, self.n // 2, self.n // 2, scale, a, b, r):
+            if is_in_obstacle(di, dj, obstacle, self.width // 2, self.height // 2, scale, a, b, r):
                 self.boundary_mask[i, j] = 1
 
             for k in ti.static(range(9)):
@@ -96,13 +98,13 @@ class LBM:
 
     @ti.kernel
     def stream(self):
-        for i, j in ti.ndrange((1, self.n - 1), (1, self.n - 1)):
+        for i, j in ti.ndrange((1, self.width - 1), (1, self.height - 1)):
             for k in ti.static(range(9)):
                 self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = self.f1[i, j][k]
 
     @ti.kernel
     def collide_and_stream(self):
-        for i, j in ti.ndrange(ti.static((1, self.n - 1)), ti.static((1, self.n - 1))):
+        for i, j in ti.ndrange(ti.static((1, self.width - 1)), ti.static((1, self.height - 1))):
             rho = self.f1[i, j].sum()
             # Calculates velocity vector in one step
             vel = self.dirs @ self.f1[i, j] / rho
@@ -113,7 +115,7 @@ class LBM:
 
     @ti.kernel
     def apply_inlet(self):
-        for i in ti.ndrange(self.n):
+        for i in ti.ndrange(self.width):
             self.f1[1, i][5] = self.inlet_val
 
     @ti.kernel
@@ -137,7 +139,7 @@ class LBM:
         self.max_val[None] = self.max_val[None] * 0.95 + curr_max * 0.05
 
     def display(self):
-        gui = ti.GUI('LBM Simulation', (self.n - 2, self.n - 2))
+        gui = ti.GUI('LBM Simulation', (self.width - 2, self.height - 2))
         self.f2.copy_from(self.f1)
         self.apply_inlet()
         self.stream()
