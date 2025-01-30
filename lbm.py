@@ -71,19 +71,19 @@ class LBM:
         self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
-        obstacle = CYLINDER
+        obstacle = AIRFOIL
         center_x = self.width // 2
         center_y = self.height // 2
         scale = width // 8
-        # a = 0.026
-        # b = 0.077
-        # r = 0.918
-        scale = width//20
-        a = 0
-        b = 0
-        r = 1
+        a = 0.026
+        b = 0.077
+        r = 0.918
+        # scale = width//20
+        # a = 0
+        # b = 0
+        # r = 1
         theta = 0
-        self.init_grid(rho0, obstacle, center_x - 400, center_y, scale, a, b, r, theta)
+        self.init_grid(rho0, obstacle, center_x, center_y, scale, a, b, r, theta)
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
