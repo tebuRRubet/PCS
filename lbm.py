@@ -13,7 +13,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 
 def precompute_colormap():
-    viridis = color_m.get_cmap('viridis', 256)
+    viridis = color_m.get_cmap('plasma', 256)
     # Extract RGB values
     colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
@@ -51,7 +51,7 @@ class LBM:
         self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
-        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(width-2, height-2))
+        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(width, height))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
@@ -96,7 +96,7 @@ class LBM:
     @ti.kernel
     def normalize_and_map(self):
         for i, j in self.rgb_image:
-            norm_val = ti.cast(self.vel[i + 1, j + 1] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.static(range(3)):
@@ -128,7 +128,7 @@ class LBM:
 
     @ti.kernel
     def apply_inlet(self):
-        for i in ti.ndrange(self.width):
+        for i in ti.ndrange(self.height):
             self.f1[1, i][5] = self.inlet_val
 
     @ti.kernel
@@ -152,13 +152,13 @@ class LBM:
         self.max_val[None] = self.max_val[None] * 0.9 + curr_max * 0.1
 
     def display(self):
-        gui = ti.GUI('LBM Simulation', (self.width - 2, self.height - 2))
+        gui = ti.GUI('LBM Simulation', (self.width, self.height))
 
         # Create folder for saving frames
         output_folder = "lbm_frames"
         os.makedirs(output_folder, exist_ok=True)
 
-        frame_count = 0
+        # frame_count = 0
 
         self.f2.copy_from(self.f1)
         self.apply_inlet()
@@ -168,10 +168,11 @@ class LBM:
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
 
-            filename = os.path.join(output_folder, f"frame_{frame_count:04d}.png")
-            gui.show(filename)
-            frame_count += 1
-            print(frame_count)
+            # filename = os.path.join(output_folder, f"frame_{frame_count:04d}.png")
+            # gui.show(filename)
+            gui.show()
+            # frame_count += 1
+            # print(frame_count)
 
             for _ in range(10):
                 self.apply_inlet()
@@ -179,8 +180,8 @@ class LBM:
                 self.boundary_condition()
                 self.update()
 
-        print("Simulation ended. Generating GIF...")
-        subprocess.run(["python", "generate_gif.py"])
+        # print("Simulation ended. Generating GIF...")
+        # subprocess.run(["python", "generate_gif.py"])
 
 
 L = LBM()
