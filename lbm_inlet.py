@@ -22,7 +22,7 @@ def precompute_colormap():
 
 @ti.data_oriented
 class LBM:
-    def __init__(self, width=1024, height=512, tau=0.8, rho0=1.0, inlet_val=0.2, block_size=128):
+    def __init__(self, width=1024, height=512, tau=0.55, rho0=1.0, inlet_val=0.15, block_size=128, theta=0):
         if width % block_size or height % block_size:
             print(f"Error, block_size ({block_size}) must be a divisor of n ({width}) and m ({height})!")
             print(f"{width} = {width // block_size} * {block_size} + {width % block_size}.")
@@ -64,6 +64,11 @@ class LBM:
         self.cont = ti.field(ti.i8, shape=())
         self.cont.fill(1)
 
+
+        self.drag = ti.field(dtype=ti.f32, shape=())
+        self.lift = ti.field(dtype=ti.f32, shape=())
+
+
         self.boundary_mask = ti.field(ti.i8)
         self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
@@ -75,7 +80,11 @@ class LBM:
         a = 0.026
         b = 0.077
         r = 0.918
-        theta = 5
+        # scale = width//20
+        # a = 0
+        # b = 0
+        # r = 1
+
         self.init_grid(rho0, obstacle, center_x, center_y, scale, a, b, r, theta)
         obstacle = CYLINDER
         scale = width//20
@@ -181,9 +190,13 @@ class LBM:
 
     @ti.kernel
     def boundary_condition(self):
+        self.drag[None] = 0.0
+        self.lift[None] = 0.0
         for i, j in self.boundary_mask:
             for k in ti.static(range(9)):
                 self.f2[i + self.dirs[0, 8 - k], j + self.dirs[1, 8 - k]][8 - k] = self.f2[i, j][k]
+                self.drag[None] += 2 * self.f2[i, j][k] * self.dirs[0, k]
+                self.lift[None] += 2 * self.f2[i, j][k] * self.dirs[1, k]
 
     @ti.kernel
     def upper_bound(self):
@@ -259,7 +272,10 @@ class LBM:
         self.f2.copy_from(self.f1)
         self.apply_inlet(step, max_step)
         self.stream()
-        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+
+        drag = []
+        lift = []
+        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and step < 10000:
             self.max_vel()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
@@ -281,7 +297,9 @@ class LBM:
                 # self.upper_bound()
                 self.update()
 
-
+                drag.append(self.drag[None])
+                lift.append(self.lift[None])
+                print("ratio:", self.lift[None] / self.drag[None], "drag:", self.drag[None], "lift:", self.lift[None], step)
 
                 # if not self.cont[None]:
                 #     sleep(0.3)
@@ -296,10 +314,74 @@ class LBM:
             # self.upper_sum()
             # self.right_sum()
             # self.lower_sum()
-
+        return (drag, lift)
         # print("Simulation ended. Generating GIF...")
         # subprocess.run(["python3", "generate_gif.py"])
 
-from time import sleep
-L = LBM()
-L.display()
+import matplotlib.pyplot as plt
+# final = 20
+# amount = 5
+
+# drags = []
+# lifts = []
+# for i in range(amount):
+#     L = LBM(theta=final - amount)
+#     drag, lift = L.display()
+#     drags.append(drag)
+#     lifts.append(lift)
+#     print("DONE WITH", i)
+
+#     np.savetxt(f"drags{final}.csv", drags, delimiter =", ", fmt ='% s')
+#     np.savetxt(f"lifts{final}.csv", lifts, delimiter =", ", fmt ='% s')
+
+drag = []
+lift = []
+
+for i in range(4):
+    data = np.loadtxt(f"drags{5 * (i + 1)}.csv", delimiter=",", dtype=float)
+    drag.extend(data.tolist())
+    data = np.loadtxt(f"lifts{5 * (i + 1)}.csv", delimiter=",", dtype=float)
+    lift.extend(data.tolist())
+
+
+from scipy.optimize import curve_fit
+
+def parabola(x, a, b, c):
+    return a * (x - b)**2 + c
+
+last = 5000
+its = 2000
+# print(drag[5])
+mean_drag = np.array([np.mean(drag[i][-last:-last + its]) for i in range(len(drag))])
+mean_lift = np.array([np.mean(lift[i][-last:-last + its]) for i in range(len(lift))])
+mean_ratio = mean_lift / mean_drag
+angles = [i for i in range(20)]
+
+start, end = 3, 12
+fit, _ = curve_fit(parabola, angles[start:end], mean_ratio[start:end])
+
+x_peak = fit[1]
+print(x_peak)
+
+plt.plot(angles[start:end], parabola(angles[start:end], *fit), linestyle='--', label=f"peak x: {x_peak}")
+plt.plot(mean_ratio)
+plt.xlabel("Angle of the airfoil in degrees")
+plt.ylabel("Lift/Drag ratio")
+# plt.grid(1)
+plt.legend()
+plt.show()
+
+
+# for i, d in enumerate(drag[::5]):
+#     plt.plot(d, label=f"{i * 5}")
+# plt.xlabel("step")
+# plt.ylabel("drag")
+# plt.legend()
+# plt.show()
+
+# for i, l in enumerate(lift[::5]):
+#     plt.plot(l, label=f"{i * 5}")
+# plt.xlabel("step")
+# plt.ylabel("lift")
+# plt.legend()
+# plt.show()
