@@ -140,33 +140,18 @@ class LBM:
     @ti.kernel
     def apply_inlet(self, t: ti.types.f32, T: ti.types.i32):
         xv = self.inlet_val * (1 - ti.exp(-t / T))
-        yv = 0.0
         for i in ti.ndrange(self.height):
             rho = self.f1[1, i].sum()
             vel = self.dirs @ self.f1[0, i] / rho
             for k in ti.static((2, 5, 8)):
                 cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
                 self.f1[1, i][k] = self.feq(self.w[k], rho / (1 - xv), cm, 0.01)
-            # self.f1[1, i][2] = 0.3 * self.inlet_val
-            # self.f1[1, i][5] = self.inlet_val
-            # self.f1[1, i][8] = 0.3 * self.inlet_val
 
     @ti.kernel
     def apply_outlet(self):
         for i in ti.ndrange(self.height):
-            # x = self.width - 10
-            # if i == 300:
-            #     vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
-            #     ti.atomic_max(self.temp_max[None], vel[0])
-            #     print(vel, self.temp_max[None])
             self.f2[self.width - 1, i] = self.f2[self.width - 2, i]
-            # if i == 300:
-            #     vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
-            #     ti.atomic_max(self.temp_max[None], vel[0])
-            #     print(vel, self.temp_max[None])
-            #     print()
-            # if self.temp_max[None] >= 0.035135:
-            #     self.cont[None] = 0
+
 
     @ti.kernel
     def boundary_condition(self):
@@ -187,6 +172,35 @@ class LBM:
         for i, j in self.vel:
             ti.atomic_max(curr_max, self.vel[i, j])
         self.max_val[None] = self.max_val[None] * 0.9 + curr_max * 0.1
+
+    @ti.kernel
+    def upper_sum(self):
+        val = 0.0
+        for i in ti.ndrange(self.width):
+            ti.atomic_add(val, self.f2[i, self.height - 1].sum())
+        print(f"Upper sum: {val}", end="\t")
+
+    @ti.kernel
+    def lower_sum(self):
+        val = 0.0
+        for i in ti.ndrange(self.width):
+            ti.atomic_add(val, self.f2[i, 0].sum())
+        print(f"Lower sum: {val}", end="\t")
+
+    @ti.kernel
+    def left_sum(self):
+        val = 0.0
+        for i in ti.ndrange(self.height):
+            ti.atomic_add(val, self.f2[0, i].sum())
+        print(f"Left sum: {val}", end="\t")
+
+    @ti.kernel
+    def right_sum(self):
+        val = 0.0
+        for i in ti.ndrange(self.height):
+            ti.atomic_add(val, self.f2[self.width - 1, i].sum())
+        print(f"Right sum: {val}")
+
 
     def display(self):
         gui = ti.GUI('LBM Simulation', (self.width, self.height))
@@ -219,6 +233,9 @@ class LBM:
                 self.collide_and_stream()
                 self.boundary_condition()
                 self.update()
+
+
+
                 # if not self.cont[None]:
                 #     sleep(0.3)
                 #     self.max_vel()
@@ -228,6 +245,10 @@ class LBM:
                 # while gui.running:
                 #     gui.set_image(self.rgb_image)
                 #     gui.show()
+            # self.left_sum()
+            # self.upper_sum()
+            # self.right_sum()
+            # self.lower_sum()
 
         # print("Simulation ended. Generating GIF...")
         # subprocess.run(["python", "generate_gif.py"])
