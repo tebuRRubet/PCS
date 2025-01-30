@@ -83,7 +83,7 @@ class LBM:
         b = 0
         r = 1
         theta = 0
-        self.init_grid(rho0, obstacle, center_x - 300, center_y, scale, a, b, r, theta)
+        self.init_grid(rho0, obstacle, center_x - 400, center_y, scale, a, b, r, theta)
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
@@ -138,8 +138,8 @@ class LBM:
                 self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = (1 - self.tau_inv) * self.f1[i, j][k] + self.tau_inv * self.feq(self.w[k], rho, cm, tm.dot(vel, vel))
 
     @ti.kernel
-    def apply_inlet(self):
-        xv = 0.2
+    def apply_inlet(self, t: ti.types.f32, T: ti.types.i32):
+        xv = self.inlet_val * (1 - ti.exp(-t / T))
         yv = 0.0
         for i in ti.ndrange(self.height):
             rho = self.f1[1, i].sum()
@@ -154,19 +154,19 @@ class LBM:
     @ti.kernel
     def apply_outlet(self):
         for i in ti.ndrange(self.height):
-            x = self.width - 10
-            if i == 300:
-                vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
-                ti.atomic_max(self.temp_max[None], vel[0])
-                print(vel, self.temp_max[None])
+            # x = self.width - 10
+            # if i == 300:
+            #     vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
+            #     ti.atomic_max(self.temp_max[None], vel[0])
+            #     print(vel, self.temp_max[None])
             self.f2[self.width - 1, i] = self.f2[self.width - 2, i]
-            if i == 300:
-                vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
-                ti.atomic_max(self.temp_max[None], vel[0])
-                print(vel, self.temp_max[None])
-                print()
-            if self.temp_max[None] >= 0.035135:
-                self.cont[None] = 0
+            # if i == 300:
+            #     vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
+            #     ti.atomic_max(self.temp_max[None], vel[0])
+            #     print(vel, self.temp_max[None])
+            #     print()
+            # if self.temp_max[None] >= 0.035135:
+            #     self.cont[None] = 0
 
     @ti.kernel
     def boundary_condition(self):
@@ -196,9 +196,10 @@ class LBM:
         os.makedirs(output_folder, exist_ok=True)
 
         # frame_count = 0
-
+        step = 0
+        max_step = 5000
         self.f2.copy_from(self.f1)
-        self.apply_inlet()
+        self.apply_inlet(step, max_step)
         self.stream()
         while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
             self.max_vel()
@@ -212,7 +213,8 @@ class LBM:
             # print(frame_count)
 
             for _ in range(100):
-                self.apply_inlet()
+                step += 1
+                self.apply_inlet(step, max_step)
                 self.apply_outlet()
                 self.collide_and_stream()
                 self.boundary_condition()
