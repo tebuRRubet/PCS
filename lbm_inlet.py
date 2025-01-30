@@ -14,7 +14,7 @@ UP_LEFT, UP, UP_RIGHT, LEFT, MID, RIGHT, DOWN_LEFT, DOWN, DOWN_RIGHT = range(9)
 
 
 def precompute_colormap():
-    viridis = color_m.get_cmap('viridis', 256)
+    viridis = color_m.get_cmap('plasma', 256)
     # Extract RGB values
     colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
