@@ -1,11 +1,9 @@
-import os
-import subprocess
 import taichi as ti
 import taichi.math as tm
 import numpy as np
 import matplotlib.cm as color_m
 from obstacles import rotate, is_in_obstacle
-
+import matplotlib.pyplot as plt
 
 ti.init(arch=ti.gpu)
 
@@ -13,7 +11,7 @@ CYLINDER, EGG, AIRFOIL = 0, 1, 2
 
 
 def precompute_colormap():
-    viridis = color_m.get_cmap('plasma', 256)
+    viridis = color_m.get_cmap('viridis', 256)
     # Extract RGB values
     colors = viridis(np.linspace(0, 1, 256))[:, :3]
     return colors.astype(np.float32)
@@ -51,26 +49,18 @@ class LBM:
         self.colormap = ti.Vector.field(3, dtype=ti.f32, shape=(256,))
         colors = precompute_colormap()
         self.colormap.from_numpy(colors)
-        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(width, height))
+        self.rgb_image = ti.Vector.field(3, dtype=ti.u8, shape=(width-2, height-2))
         self.max_val = ti.field(ti.f32, shape=())
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
 
-
-
-        self.temp_max = ti.field(ti.f32, shape=())
-        self.temp_max.fill(1e-8)
-        self.cont = ti.field(ti.i8, shape=())
-        self.cont.fill(1)
+        self.boundary_mask = ti.field(ti.i8)
+        self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
+        self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
 
         self.drag = ti.field(dtype=ti.f32, shape=())
         self.lift = ti.field(dtype=ti.f32, shape=())
-
-
-        self.boundary_mask = ti.field(ti.i8)
-        self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
-        self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
         obstacle = AIRFOIL
         center_x = self.width // 2
@@ -83,7 +73,6 @@ class LBM:
         # a = 0
         # b = 0
         # r = 1
-
         self.init_grid(rho0, obstacle, center_x, center_y, scale, a, b, r, theta)
 
     @ti.func
@@ -108,7 +97,7 @@ class LBM:
     @ti.kernel
     def normalize_and_map(self):
         for i, j in self.rgb_image:
-            norm_val = ti.cast(self.vel[i, j] / self.max_val[None] * (255), ti.i32)
+            norm_val = ti.cast(self.vel[i + 1, j + 1] / self.max_val[None] * (255), ti.i32)
 
             norm_val = ti.min(ti.max(norm_val, 0), (255))
             for c in ti.static(range(3)):
@@ -139,20 +128,9 @@ class LBM:
                 self.f2[i + self.dirs[0, k], j + self.dirs[1, k]][k] = (1 - self.tau_inv) * self.f1[i, j][k] + self.tau_inv * self.feq(self.w[k], rho, cm, tm.dot(vel, vel))
 
     @ti.kernel
-    def apply_inlet(self, t: ti.types.f32, T: ti.types.i32):
-        xv = self.inlet_val * (1 - ti.exp(-t / T))
-        for i in ti.ndrange(self.height):
-            rho = self.f1[1, i].sum()
-            vel = self.dirs @ self.f1[0, i] / rho
-            for k in ti.static((2, 5, 8)):
-                cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
-                self.f1[1, i][k] = self.feq(self.w[k], rho / (1 - xv), cm, 0.01)
-
-    @ti.kernel
-    def apply_outlet(self):
-        for i in ti.ndrange(self.height):
-            self.f2[self.width - 1, i] = self.f2[self.width - 2, i]
-
+    def apply_inlet(self):
+        for i in ti.ndrange(self.width):
+            self.f1[1, i][5] = self.inlet_val
 
     @ti.kernel
     def boundary_condition(self):
@@ -163,6 +141,7 @@ class LBM:
                 self.f2[i + self.dirs[0, 8 - k], j + self.dirs[1, 8 - k]][8 - k] = self.f2[i, j][k]
                 self.drag[None] += 2 * self.f2[i, j][k] * self.dirs[0, k]
                 self.lift[None] += 2 * self.f2[i, j][k] * self.dirs[1, k]
+
 
     """Check performance"""
     @ti.kernel
@@ -178,103 +157,48 @@ class LBM:
             ti.atomic_max(curr_max, self.vel[i, j])
         self.max_val[None] = self.max_val[None] * 0.9 + curr_max * 0.1
 
-    @ti.kernel
-    def upper_sum(self):
-        val = 0.0
-        for i in ti.ndrange(self.width):
-            ti.atomic_add(val, self.f2[i, self.height - 1].sum())
-        print(f"Upper sum: {val}", end="\t")
-
-    @ti.kernel
-    def lower_sum(self):
-        val = 0.0
-        for i in ti.ndrange(self.width):
-            ti.atomic_add(val, self.f2[i, 0].sum())
-        print(f"Lower sum: {val}", end="\t")
-
-    @ti.kernel
-    def left_sum(self):
-        val = 0.0
-        for i in ti.ndrange(self.height):
-            ti.atomic_add(val, self.f2[0, i].sum())
-        print(f"Left sum: {val}", end="\t")
-
-    @ti.kernel
-    def right_sum(self):
-        val = 0.0
-        for i in ti.ndrange(self.height):
-            ti.atomic_add(val, self.f2[self.width - 1, i].sum())
-        print(f"Right sum: {val}")
-
-
     def display(self):
-        gui = ti.GUI('LBM Simulation', (self.width, self.height))
-
-        # Create folder for saving frames
-        output_folder = "lbm_frames"
-        os.makedirs(output_folder, exist_ok=True)
-
-        # frame_count = 0
-        step = 0
-        max_step = 5000
+        gui = ti.GUI('LBM Simulation', (self.width - 2, self.height - 2))
         self.f2.copy_from(self.f1)
-        self.apply_inlet(step, max_step)
+        self.apply_inlet()
         self.stream()
 
+        i = 0
         drag = []
         lift = []
-        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and step < 10000:
+
+        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and i < 800:
             self.max_vel()
             self.normalize_and_map()
             gui.set_image(self.rgb_image)
-
-            # filename = os.path.join(output_folder, f"frame_{frame_count:04d}.png")
-            # gui.show(filename)
             gui.show()
-            # frame_count += 1
-            # print(frame_count)
 
-            for _ in range(100):
-                step += 1
-                self.apply_inlet(step, max_step)
-                self.apply_outlet()
+            for _ in range(10):
+                self.apply_inlet()
                 self.collide_and_stream()
                 self.boundary_condition()
                 self.update()
 
                 drag.append(self.drag[None])
                 lift.append(self.lift[None])
-                print("ratio:", self.lift[None] / self.drag[None], "drag:", self.drag[None], "lift:", self.lift[None], step)
-
-                # if not self.cont[None]:
-                #     sleep(0.3)
-                #     self.max_vel()
-                #     self.normalize_and_map()
-                #     gui.set_image(self.rgb_image)
-                #     gui.show()
-                # while gui.running:
-                #     gui.set_image(self.rgb_image)
-                #     gui.show()
-            # self.left_sum()
-            # self.upper_sum()
-            # self.right_sum()
-            # self.lower_sum()
+                print("ratio:", self.lift[None] / self.drag[None], "drag:", self.drag[None], "lift:", self.lift[None])
+            i += 1
+            if i % 1000 == 0:
+                print(i)
         return (drag, lift)
-        # print("Simulation ended. Generating GIF...")
-        # subprocess.run(["python", "generate_gif.py"])
+            
 
-import matplotlib.pyplot as plt
-# final = 20
-# amount = 5
+final = 45
+amount = 1
 
-# drags = []
-# lifts = []
-# for i in range(amount):
-#     L = LBM(theta=final - amount)
-#     drag, lift = L.display()
-#     drags.append(drag)
-#     lifts.append(lift)
-#     print("DONE WITH", i)
+drags = []
+lifts = []
+for i in range(amount):
+    L = LBM(theta=final - amount)
+    drag, lift = L.display()
+    drags.append(drag)
+    lifts.append(lift)
+    print("DONE WITH", i)
 
 #     np.savetxt(f"drags{final}.csv", drags, delimiter =", ", fmt ='% s')
 #     np.savetxt(f"lifts{final}.csv", lifts, delimiter =", ", fmt ='% s')
@@ -288,45 +212,11 @@ for i in range(4):
     data = np.loadtxt(f"lifts{5 * (i + 1)}.csv", delimiter=",", dtype=float)
     lift.extend(data.tolist())
 
-
-from scipy.optimize import curve_fit
-
-def parabola(x, a, b, c):
-    return a * (x - b)**2 + c
-
-last = 5000
-its = 2000
+last = 2000
 # print(drag[5])
-mean_drag = np.array([np.mean(drag[i][-last:-last + its]) for i in range(len(drag))])
-mean_lift = np.array([np.mean(lift[i][-last:-last + its]) for i in range(len(lift))])
-mean_ratio = mean_lift / mean_drag
-angles = [i for i in range(20)]
-
-start, end = 3, 12
-fit, _ = curve_fit(parabola, angles[start:end], mean_ratio[start:end])
-
-x_peak = fit[1]
-print(x_peak)
-
-plt.plot(angles[start:end], parabola(angles[start:end], *fit), linestyle='--', label=f"peak x: {x_peak}")
-plt.plot(mean_ratio)
+mean_drag = np.array([np.mean(drag[i][-last:]) for i in range(len(drag))])
+mean_lift = np.array([np.mean(lift[i][-last:]) for i in range(len(lift))])
+plt.plot(mean_lift / mean_drag)
 plt.xlabel("Angle of the airfoil in degrees")
 plt.ylabel("Lift/Drag ratio")
-# plt.grid(1)
-plt.legend()
-plt.show()
-
-
-# for i, d in enumerate(drag[::5]):
-#     plt.plot(d, label=f"{i * 5}")
-# plt.xlabel("step")
-# plt.ylabel("drag")
-# plt.legend()
-# plt.show()
-
-# for i, l in enumerate(lift[::5]):
-#     plt.plot(l, label=f"{i * 5}")
-# plt.xlabel("step")
-# plt.ylabel("lift")
-# plt.legend()
 # plt.show()
