@@ -56,23 +56,34 @@ class LBM:
         self.max_val.fill(1e-8)
         self.inlet_val = inlet_val
 
+
+
+        self.temp_max = ti.field(ti.f32, shape=())
+        self.temp_max.fill(1e-8)
+        self.cont = ti.field(ti.i8, shape=())
+        self.cont.fill(1)
+
+
+
+
+
         self.boundary_mask = ti.field(ti.i8)
         self.b_sparse_mask = ti.root.pointer(ti.ij, (width // block_size, height // block_size))
         self.b_sparse_mask.bitmasked(ti.ij, (block_size, block_size)).place(self.boundary_mask)
 
-        obstacle = AIRFOIL
+        obstacle = CYLINDER
         center_x = self.width // 2
         center_y = self.height // 2
         scale = width // 8
-        a = 0.026
-        b = 0.077
-        r = 0.918
-        # scale = width//20
-        # a = 0
-        # b = 0
-        # r = 1
+        # a = 0.026
+        # b = 0.077
+        # r = 0.918
+        scale = width//20
+        a = 0
+        b = 0
+        r = 1
         theta = 0
-        self.init_grid(rho0, obstacle, center_x, center_y, scale, a, b, r, theta)
+        self.init_grid(rho0, obstacle, center_x - 300, center_y, scale, a, b, r, theta)
 
     @ti.func
     def feq(self, weight, rho, cm, vel):
@@ -128,8 +139,34 @@ class LBM:
 
     @ti.kernel
     def apply_inlet(self):
+        xv = 0.2
+        yv = 0.0
         for i in ti.ndrange(self.height):
-            self.f1[1, i][5] = self.inlet_val
+            rho = self.f1[1, i].sum()
+            vel = self.dirs @ self.f1[0, i] / rho
+            for k in ti.static((2, 5, 8)):
+                cm = vel[0] * self.dirs[0, k] + vel[1] * self.dirs[1, k]
+                self.f1[1, i][k] = self.feq(self.w[k], rho / (1 - xv), cm, 0.01)
+            # self.f1[1, i][2] = 0.3 * self.inlet_val
+            # self.f1[1, i][5] = self.inlet_val
+            # self.f1[1, i][8] = 0.3 * self.inlet_val
+
+    @ti.kernel
+    def apply_outlet(self):
+        for i in ti.ndrange(self.height):
+            x = self.width - 10
+            if i == 300:
+                vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
+                ti.atomic_max(self.temp_max[None], vel[0])
+                print(vel, self.temp_max[None])
+            self.f2[self.width - 1, i] = self.f2[self.width - 2, i]
+            if i == 300:
+                vel = self.dirs @ self.f2[x, i] / self.f2[x, i].sum()
+                ti.atomic_max(self.temp_max[None], vel[0])
+                print(vel, self.temp_max[None])
+                print()
+            if self.temp_max[None] >= 0.035135:
+                self.cont[None] = 0
 
     @ti.kernel
     def boundary_condition(self):
@@ -174,15 +211,25 @@ class LBM:
             # frame_count += 1
             # print(frame_count)
 
-            for _ in range(10):
+            for _ in range(100):
                 self.apply_inlet()
+                self.apply_outlet()
                 self.collide_and_stream()
                 self.boundary_condition()
                 self.update()
+                # if not self.cont[None]:
+                #     sleep(0.3)
+                #     self.max_vel()
+                #     self.normalize_and_map()
+                #     gui.set_image(self.rgb_image)
+                #     gui.show()
+                # while gui.running:
+                #     gui.set_image(self.rgb_image)
+                #     gui.show()
 
         # print("Simulation ended. Generating GIF...")
         # subprocess.run(["python", "generate_gif.py"])
 
-
+from time import sleep
 L = LBM()
 L.display()
