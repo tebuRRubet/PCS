@@ -139,10 +139,10 @@ class LBM:
         and obstacle placement for the Lattice Boltzmann Method (LBM).
 
         rho0 (ti float):    Initial density of the fluid.
-        obstacle (int):     Obstacle type identifier.
-        center_x (int):     X-coordinate of the obstacle's center.
-        center_y (int):     Y-coordinate of the obstacle's center.
-        scale (int):    Scaling factor for the obstacle size.
+        obstacle (ti int):     Obstacle type identifier.
+        center_x (ti int):     X-coordinate of the obstacle's center.
+        center_y (ti int):     Y-coordinate of the obstacle's center.
+        scale (ti int):    Scaling factor for the obstacle size.
         a (ti float):   Parameter defining the Joukowski airfoil shape.
         b (ti float):   Parameter defining the Joukowski airfoil shape.
         r (ti float):   Parameter defining the Joukowski airfoil transformation.
