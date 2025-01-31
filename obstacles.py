@@ -1,4 +1,7 @@
 import taichi as ti
+"""
+Geometric transformations and obstacle definitions for LBM simulations.
+"""
 
 CYLINDER, EGG, AIRFOIL = 0, 1, 2
 

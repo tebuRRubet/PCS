@@ -1,7 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-
+"""
+This script analyzes lift-to-drag ratios for different airfoil angles using simulation data.
+"""
 
 drag = []
 lift = []
