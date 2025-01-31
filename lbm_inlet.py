@@ -356,10 +356,11 @@ class LBM:
 ti.init(arch=ti.cuda)
 
 # Karman Vortex Street
-# L = LBM(obstacle=CYLINDER, l_offset=400, tunnel=True, scale=40, theta=0)
+L = LBM(obstacle=CYLINDER, l_offset=400, tunnel=True, scale=40, theta=0,
+        colormap="viridis")
 
 # Airfoil
-L = LBM()
+# L = LBM()
 
 # Choose which to simulate or set your own parameters.
 L.simulate()
